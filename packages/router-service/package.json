@@ -1,0 +1,11 @@
+{
+  "name": "@shop/router-service",
+  "version": "0.1.0",
+  "description": "Koefekt 'router': reaktywna tabela tras (prefix -> host:port) do ktorej instancje Nuxt rejestruja sie/wyrejestrowuja przy starcie/stopie. Uzywana przez Service Broker do routowania HTTP.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@shop/shared": "workspace:*",
+    "cordis": "^4.0.0-rc.8"
+  }
+}

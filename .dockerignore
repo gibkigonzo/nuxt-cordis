@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+.nuxt
+**/.nuxt
+.output
+**/.output
+.remote-cache
+.remote-cache-test
+deploy/.artifacts
+*.log
+.git
+.DS_Store
+.env
+.env.*

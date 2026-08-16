@@ -1,0 +1,11 @@
+{
+  "name": "@shop/cart-service",
+  "version": "0.1.0",
+  "description": "Koefekt 'cart': serwis stanu koszyka wspoldzielony przez wszystkie instancje Nuxt w procesie (bez narzutu sieciowego).",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@shop/shared": "workspace:*",
+    "cordis": "^4.0.0-rc.8"
+  }
+}

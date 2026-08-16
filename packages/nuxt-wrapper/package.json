@@ -1,0 +1,12 @@
+{
+  "name": "@shop/nuxt-wrapper",
+  "version": "0.1.0",
+  "description": "Uniwersalny komponent Cordis opakowujacy zbudowana aplikacje Nuxt (Nitro preset node-listener) w rewersyjny efekt: start (listen) / dispose (close).",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@shop/shared": "workspace:*",
+    "chokidar": "^5.0.0",
+    "cordis": "^4.0.0-rc.8"
+  }
+}

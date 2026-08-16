@@ -1,0 +1,11 @@
+{
+  "name": "@shop/product-service",
+  "version": "0.1.0",
+  "description": "Koefekt 'product': katalog produktow wspoldzielony przez wszystkie instancje Nuxt w procesie.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@shop/shared": "workspace:*",
+    "cordis": "^4.0.0-rc.8"
+  }
+}

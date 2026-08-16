@@ -1,0 +1,11 @@
+name = "nuxt-cordis-manifest"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+# Podmien <KV_NAMESPACE_ID> na id namespace utworzonego przez:
+#   wrangler kv namespace create MANIFEST_KV
+# Ten sam id wpisz tez jako zmienna repo KV_NAMESPACE_ID uzywana przez
+# deploy/workflows/deploy-module.yml.
+[[kv_namespaces]]
+binding = "MANIFEST_KV"
+id = "<KV_NAMESPACE_ID>"

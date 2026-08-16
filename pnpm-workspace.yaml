@@ -1,0 +1,4 @@
+packages:
+  - orchestrator
+  - packages/*
+  - apps/*

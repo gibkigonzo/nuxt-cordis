@@ -1,0 +1,74 @@
+# Deklaratywna konfiguracja calego sklepu (Definition 74 w pracy o Cordis: kazdy
+# wpis = jeden fiber). Kolejnosc wpisow NIE ma znaczenia funkcjonalnego - Loader
+# tworzy je wspolbieznie (Promise.all), a rzeczywista kolejnosc aktywacji wynika
+# WYLACZNIE z tego, kto co deklaruje przez `inject` (Theorem 63/73: koniowy stan
+# jest funkcja configu, nie harmonogramu). Ponizsza kolejnosc jest czysto
+# kosmetyczna (uslugi -> brama -> aplikacje).
+
+# --- konsola/logi -----------------------------------------------------------
+- id: logger
+  name: '@cordisjs/plugin-logger-console'
+
+# --- HMR wlasnego kodu warstwy Cordis (packages/*) ---------------------------
+# UWAGA: to obserwuje ZRODLA komponentow (nuxt-wrapper, cart-service, ...), NIE
+# zbudowane aplikacje Nuxt - te maja WLASNY watcher wbudowany w @shop/nuxt-wrapper
+# (config.watch), bo sa ladowane przez dynamiczny import() z URL-em obliczanym w
+# runtime, ktorego @cordisjs/plugin-hmr nie widzi w statycznym grafie modulow.
+- id: hmr
+  name: '@cordisjs/plugin-hmr'
+  config:
+    root: ['packages', 'orchestrator/src']
+    debounce: 300
+    ignored: ['**/node_modules/**', '**/.output/**', '**/dist/**']
+
+# --- koefekty (wspoldzielone uslugi w pamieci procesu) -----------------------
+- id: router-service
+  name: '@shop/router-service'
+
+- id: product-service
+  name: '@shop/product-service'
+
+- id: cart-service
+  name: '@shop/cart-service'
+
+# --- brama HTTP (Service Broker, Section 6.2) --------------------------------
+# Sam jest komponentem Cordis - moze byc aktualizowany w locie tak samo jak
+# kazda inna czesc systemu.
+- id: broker
+  name: '@shop/broker'
+  config:
+    host: 0.0.0.0
+    port: 8080
+
+# --- instancje Nuxt (kazda: osobny fiber, osobny proces budowania) ----------
+- id: home
+  name: '@shop/nuxt-wrapper'
+  config:
+    id: home
+    dir: ./apps/home
+    port: 3000
+    inject: ['router']
+    route: /
+
+- id: product
+  name: '@shop/nuxt-wrapper'
+  config:
+    id: product
+    dir: ./apps/product
+    port: 3001
+    inject: ['cart', 'product', 'router']
+    route: /product
+
+- id: cart
+  name: '@shop/nuxt-wrapper'
+  config:
+    id: cart
+    dir: ./apps/cart
+    port: 3002
+    inject: ['cart', 'router']
+    route: /cart
+
+# Czwarty modul (apps/checkout) celowo NIE jest tu jeszcze wpisany - patrz
+# deploy/checkout-module-plan.md. Jego dodanie polega WYLACZNIE na dopisaniu
+# analogicznego wpisu (id: checkout, dir: ./apps/checkout, port: 3003,
+# inject: ['cart', 'router'], route: /checkout) - bez restartu powyzszych.

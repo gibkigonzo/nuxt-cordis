@@ -1,0 +1,24 @@
+{
+  "name": "orchestrator",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Glowny proces Cordis: bootstrapuje Context, Loader i @cordisjs/plugin-include wskazujacy na ./cordis.yml. Cala kompozycja (uslugi, brama, aplikacje Nuxt) jest deklaratywna - patrz cordis.yml.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "node --enable-source-maps src/index.ts"
+  },
+  "dependencies": {
+    "@cordisjs/plugin-hmr": "^1.0.15",
+    "@cordisjs/plugin-include": "^1.0.4",
+    "@cordisjs/plugin-logger-console": "^1.0.0",
+    "@cordisjs/plugin-loader": "^1.0.0-rc.5",
+    "@shop/broker": "workspace:*",
+    "@shop/cart-service": "workspace:*",
+    "@shop/nuxt-wrapper": "workspace:*",
+    "@shop/product-service": "workspace:*",
+    "@shop/remote-sync": "workspace:*",
+    "@shop/router-service": "workspace:*",
+    "cordis": "^4.0.0-rc.8"
+  }
+}

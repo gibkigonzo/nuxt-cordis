@@ -1,0 +1,43 @@
+# Zaleznosci (kazdy pakiet/apka w workspace ma wlasny node_modules przez pnpm)
+node_modules/
+
+# Build output - Nuxt/Nitro (kazda apka: apps/*/.nuxt, apps/*/.output)
+.nuxt/
+.output/
+.data/
+.nitro/
+
+# Cache narzedzi
+.cache/
+.vite/
+.turbo/
+
+# Artefakty deploymentu (tarball'e budowane lokalnie przez publish-module.mjs)
+deploy/.artifacts/
+
+# Cache remote-sync (pobrane/rozpakowane zdalne moduly - odtwarzalne, nie commitowac)
+.remote-cache/
+.remote-cache-test/
+
+# Logi
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Zmienne srodowiskowe (sekrety - NIGDY nie commitowac)
+.env
+.env.*
+!.env.example
+
+# Edytory / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Testowe/tymczasowe pliki configu wygenerowane podczas developmentu
+cordis.remote-test.yml
+cordis.local.yml

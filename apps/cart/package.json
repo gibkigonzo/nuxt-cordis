@@ -1,0 +1,21 @@
+{
+  "name": "cart",
+  "private": true,
+  "version": "0.1.0",
+  "description": "apps/cart - widok koszyka (Nuxt), instancja Cordis wstrzykujaca koefekt cart.",
+  "type": "module",
+  "scripts": {
+    "dev": "nuxi dev",
+    "build": "nuxi build",
+    "typecheck": "nuxi typecheck"
+  },
+  "dependencies": {
+    "@shop/shared": "workspace:*",
+    "nuxt": "^4.5.2",
+    "vue": "^3.5.41",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "cordis": "^4.0.0-rc.8"
+  }
+}

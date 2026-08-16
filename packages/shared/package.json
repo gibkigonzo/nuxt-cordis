@@ -1,0 +1,14 @@
+{
+  "name": "@shop/shared",
+  "version": "0.1.0",
+  "description": "Wspoldzielone typy domenowe i most (bridge) do wstrzykiwania zywego kontekstu Cordis w zbudowane, osobno zbundlowane aplikacje Nitro/Nuxt.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bridge": "./src/bridge.ts"
+  },
+  "devDependencies": {
+    "cordis": "^4.0.0-rc.8"
+  }
+}
