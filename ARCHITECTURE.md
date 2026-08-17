@@ -262,9 +262,15 @@ zaimplementowac. Usunieto go nie dlatego, ze pomysl "aktualizuj fiber bez
 restartu calego procesu" byl bledny (jest dokladnie tym, co zaleca papier),
 tylko dlatego, ze KONKRETNA implementacja (niepodpisany `fetch()` + `tar`
 + `import()` z pelnym zaufaniem procesu) byla niezweryfikowalna. Wzorzec z
-papieru dalej dziala LOKALNIE w tym repo w trybie dev (`cordis.dev.yml`,
-`config.watch` - fiber `product` przeladowuje sie bez dotykania `home`/`cart`).
-Odtworzenie go bezpiecznie w produkcji wymagaloby podpisanych/weryfikowanych
+papieru (nowy provider ACTIVE -> przelaczenie ruchu -> dispose starego) jest
+teraz FAKTYCZNIE zaimplementowany lokalnie: `@shop/nuxt-wrapper` (`config.watch`,
+uzywane w `cordis.dev.yml`) robi make-before-break, nie dispose-then-create -
+nowa instancja wstaje na porcie efemerycznym OBOK starej, `RouterService`
+przelacza sie na nia dopiero gdy nasluchuje, stara jest zamykana DOPIERO
+POTEM (`server.close()` odsacza polaczenia w locie). Zweryfikowane
+empirycznie: 260 zapytan co 50ms do `/product` obejmujacych caly rebuild -
+`0/260` bledow (patrz `README.md#status-weryfikacji`). Odtworzenie tego
+bezpiecznie w produkcji (nie tylko dev) wymagaloby podpisanych/weryfikowanych
 artefaktow per-modul (np. `cosign verify` na tym samym mechanizmie atestacji
 SLSA, ktory `deploy/workflows/build-and-push.yml` juz generuje dla calego
 obrazu) plus loadera Cordis konsumujacego WYLACZNIE zweryfikowane pliki

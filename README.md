@@ -71,17 +71,22 @@ CORDIS_CONFIG=./cordis.dev.yml pnpm run start
 ```
 
 W tym trybie kazda instancja Nuxt ma wlasny watcher (`config.watch: true` w
-`cordis.dev.yml`) obserwujacy jej `.output/server/index.mjs`. W drugim
-terminalu:
+`cordis.dev.yml`) obserwujacy katalog aplikacji. W drugim terminalu:
 
 ```sh
 pnpm --filter product run build   # zmien kod, przebuduj
 ```
 
-Orchestrator wykryje nowy build, zamknie i odtworzy WYLACZNIE fiber `product`
-(dispose + reload) - `home` i `cart` nie sa dotykane, a stan `CartService`
-(osobny fiber) przetrwa w calosci. Zweryfikowane empirycznie: podczas
-przebudowy `product`, `curl /cart` przez caly czas zwraca `200` (0 przestoju).
+Podmiana jest "make-before-break" (Section 6.2 papieru Cordis: Service
+Broker), NIE dispose-then-create: `@shop/nuxt-wrapper` uruchamia nowa
+instancje na porcie efemerycznym OBOK jeszcze dzialajacej starej, przelacza
+`RouterService` na nia dopiero gdy nowa faktycznie nasluchuje, i DOPIERO
+POTEM zamyka stara (`server.close()` odsacza polaczenia w locie, nie zrywa
+ich) - `product` sam siebie wymienia bez wlasnego przestoju, nie tylko bez
+wplywu na `home`/`cart`. Zweryfikowane empirycznie w tej sesji: 260 zapytan
+co 50ms do `/product` w petli obejmujacej caly rebuild - `0/260` bledow,
+`curl /cart` i `curl /` rowniez caly czas `200`. Stan `CartService` (osobny
+fiber) przetrwa w calosci niezaleznie.
 
 ## Deployment
 
@@ -109,7 +114,8 @@ Wszystko ponizej zostalo faktycznie uruchomione i sprawdzone w tym repo (nie
 tylko zaprojektowane na papierze):
 
 - [x] build + start 3 aplikacji, routing przez brokera, wspoldzielony stan koszyka
-- [x] hot-reload pojedynczej aplikacji bez przestoju pozostalych (0/60 bledow w teście,
+- [x] hot-reload pojedynczej aplikacji "make-before-break", bez przestoju SAMEJ
+      SIEBIE ani pozostalych (0/260 bledow w teście obejmujacym caly rebuild,
       dev-only mechanizm - `cordis.dev.yml`, patrz sekcja wyzej - nie myl z usunietym
       mechanizmem dystrybucji kodu przez siec opisanym w `ARCHITECTURE.md#8`)
 - [x] graceful shutdown (SIGTERM) - kaskadowe zamkniecie w kolejnosci LIFO
