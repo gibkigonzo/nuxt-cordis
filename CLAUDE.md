@@ -54,10 +54,10 @@ Test Dockera: `docker build -f deploy/docker/Dockerfile -t shop .`
    wlasny `http.Server` na `process.env.PORT` przy imporcie (kolizja portow
    przy wielu instancjach w jednym procesie).
 
-6. **TypeScript w `packages/*` i `orchestrator/` = natywny Node type-stripping,
-   ZERO buildu.** Nie uzywaj: `enum`, parameter properties w konstruktorach
-   (`constructor(private x)`), importow wzglednych bez `.ts`. `apps/*`
-   (Nuxt/Vite/esbuild) NIE ma tych ograniczen - pelny TS jak zwykle.
+6. **TypeScript w `packages/*`, `services/*` i `orchestrator/` = natywny Node
+   type-stripping, ZERO buildu.** Nie uzywaj: `enum`, parameter properties w
+   konstruktorach (`constructor(private x)`), importow wzglednych bez `.ts`.
+   `apps/*` (Nuxt/Vite/esbuild) NIE ma tych ograniczen - pelny TS jak zwykle.
 
 7. **Porty 3000/3001/3002/8080 moga kolidowac z innymi projektami na tej
    maszynie** (raz kolidowaly z niezwiazanym projektem `prawniczkawpracy`).
@@ -70,9 +70,13 @@ Test Dockera: `docker build -f deploy/docker/Dockerfile -t shop .`
   `cordis.yml` (`name: '@shop/nuxt-wrapper'`, wlasny `port`/`route`/`inject`).
   Zero zmian w `packages/*` - wrapper jest generyczny. Pelny przyklad:
   `deploy/checkout-module-plan.md`.
-- Nowy koefekt (usluga wspoldzielona): nowy pakiet w `packages/`, klasa
-  `extends Service` (wzor: `packages/cart-service`), wpis w `cordis.yml`.
-- Zmiana routingu brokera: `packages/router-service` (tabela tras) +
+- Nowy koefekt (cos, co inny komponent bedzie `inject`-owal): nowy pakiet w
+  `services/`, klasa `extends Service` (wzor: `services/cart-service`), wpis
+  w `cordis.yml`. `packages/` jest dla kodu BEZ cyklu zycia Cordisa (zwykle
+  biblioteki, np. `packages/shared`) LUB komponentow Cordisa, ktore niczego
+  nie dostarczaja innym (np. `packages/broker`) - `services/` tylko dla
+  faktycznych dostawcow koefektow.
+- Zmiana routingu brokera: `services/router-service` (tabela tras) +
   `packages/broker` (proxy) - NIE hardkoduj portow poza `cordis.yml`.
 - Deployment: `deploy/README.md`.
 

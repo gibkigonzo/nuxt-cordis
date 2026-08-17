@@ -14,7 +14,7 @@
     "build:product": "pnpm --filter product run build",
     "build:cart": "pnpm --filter cart run build",
     "build:checkout": "pnpm --filter checkout run build",
-    "build:packages": "pnpm -r --filter=\"./packages/**\" run build",
+    "build:packages": "pnpm -r --filter=\"./packages/**\" --filter=\"./services/**\" run build",
     "dev": "pnpm run build && node --enable-source-maps orchestrator/src/index.ts",
     "start": "node --enable-source-maps orchestrator/src/index.ts",
     "typecheck": "pnpm -r run typecheck"

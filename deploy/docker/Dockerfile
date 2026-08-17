@@ -18,10 +18,10 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY orchestrator/package.json orchestrator/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/nuxt-wrapper/package.json packages/nuxt-wrapper/package.json
-COPY packages/router-service/package.json packages/router-service/package.json
-COPY packages/cart-service/package.json packages/cart-service/package.json
-COPY packages/product-service/package.json packages/product-service/package.json
 COPY packages/broker/package.json packages/broker/package.json
+COPY services/router-service/package.json services/router-service/package.json
+COPY services/cart-service/package.json services/cart-service/package.json
+COPY services/product-service/package.json services/product-service/package.json
 COPY apps/home/package.json apps/home/package.json
 COPY apps/product/package.json apps/product/package.json
 COPY apps/cart/package.json apps/cart/package.json
@@ -42,6 +42,7 @@ COPY --from=build /app/package.json /app/pnpm-workspace.yaml ./
 COPY --from=build /app/cordis.yml ./cordis.yml
 COPY --from=build /app/orchestrator ./orchestrator
 COPY --from=build /app/packages ./packages
+COPY --from=build /app/services ./services
 # Tylko zbudowane wyjscia aplikacji (.output) sa potrzebne w runtime - zrodla
 # Vue/nuxt.config.ts NIE sa potrzebne do uruchomienia, ale kopiujemy caly katalog
 # apps/ dla prostoty (kazda apka i tak zawiera tylko wlasny .output + node_modules

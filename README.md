@@ -23,10 +23,11 @@ apps/home            Nuxt - strona glowna           (port 3000, /)
 apps/product          Nuxt - katalog produktow        (port 3001, /product)
 apps/cart              Nuxt - koszyk                    (port 3002, /cart)
 
+services/cart-service   koefekt 'cart'    - stan koszyka w pamieci procesu
+services/product-service koefekt 'product' - katalog produktow
+services/router-service koefekt 'router'  - reaktywna tabela tras dla brokera
+
 packages/nuxt-wrapper   Cordis-owy wrapper: start/stop zbudowanej apki Nuxt
-packages/cart-service   koefekt 'cart'    - stan koszyka w pamieci procesu
-packages/product-service koefekt 'product' - katalog produktow
-packages/router-service koefekt 'router'  - reaktywna tabela tras dla brokera
 packages/broker         Service Broker (brama HTTP, jeden publiczny port)
 packages/shared         wspoldzielone typy + "bridge" (patrz ARCHITECTURE.md)
 
@@ -34,6 +35,15 @@ orchestrator            bootstrapuje Context + Loader; caly skladu opisuje cordi
 cordis.yml               deklaratywna konfiguracja calego systemu (zrodlo prawdy)
 deploy/                  Docker, manifesty Kubernetes, pipeline CI (GitHub Actions)
 ```
+
+Rozroznienie `packages/` vs `services/` jest mechaniczne, nie "biznes vs infra":
+`services/*` to komponenty Cordisa, ktore `provide`-uja koefekt WSTRZYKIWANY
+przez cos innego (`cart-service`/`product-service`/`router-service` - wszystkie
+trzy sa `inject`-owane gdzie indziej, mimo ze `router-service` jest infrastruktura
+routingu, nie logika domenowa). `packages/*` to reszta: albo zwykle biblioteki
+bez cyklu zycia Cordisa (`shared`), albo komponenty Cordisa, ktore SAME
+konsumuja koefekty, ale niczego nie dostarczaja innym (`broker`, `nuxt-wrapper` -
+nic ich nie `inject`-uje).
 
 ## Wymagania
 

@@ -86,8 +86,8 @@ wywolal `import()`.
 
 W przeciwienstwie do dosc naturalnej pierwszej interpretacji `PlAn.md` ("Cart
 Service bedzie... w koszyku"), `CartService`/`ProductService` sa **wlasnymi,
-niezaleznymi komponentami Cordis** (`packages/cart-service`,
-`packages/product-service`), a nie czescia cyklu zycia aplikacji `apps/cart`.
+niezaleznymi komponentami Cordis** (`services/cart-service`,
+`services/product-service`), a nie czescia cyklu zycia aplikacji `apps/cart`.
 `apps/cart` (UI) jest ROWNIEZ tylko konsumentem koefektu `cart`, dokladnie tak
 jak `apps/product`.
 
@@ -101,7 +101,7 @@ kazdej z aplikacji UI (sa to niezalezne fibery) - zweryfikowane empirycznie
 
 ## 4. Router jako reaktywny koefekt (nie hardkodowana tabela w brokerze)
 
-`packages/router-service` to trzeci koefekt (`router`): mapa prefiks -> `{host,
+`services/router-service` to trzeci koefekt (`router`): mapa prefiks -> `{host,
 port}`. Kazda instancja Nuxt (przez `@shop/nuxt-wrapper`, `config.route`)
 **sama** rejestruje/wyrejestrowuje swoja trase przy aktywacji/dezaktywacji
 fibera. Broker (`packages/broker`) nigdy nie zna z gory listy modulow - po
@@ -126,9 +126,9 @@ BEZ ZMIAN - Nitro sam dopasowuje trasy wzgledem skonfigurowanego baseURL.
 ## 5. Dwa niezalezne mechanizmy hot-reloadu
 
 - **`@cordisjs/plugin-hmr`** (entry `hmr` w `cordis.dev.yml`) obserwuje
-  *zrodla* komponentow warstwy Cordis (`packages/*/src`, statyczny graf
-  importow). Dziala dobrze dla `cart-service`/`nuxt-wrapper`/`broker` - sa
-  importowane przez staly, bare specyfikator (`@shop/cart-service`).
+  *zrodla* komponentow warstwy Cordis (`packages/*/src`, `services/*/src`,
+  statyczny graf importow). Dziala dobrze dla `cart-service`/`nuxt-wrapper`/
+  `broker` - sa importowane przez staly, bare specyfikator (`@shop/cart-service`).
 - **Wlasny watcher w `@shop/nuxt-wrapper`** (`config.watch: true`) obserwuje
   zbudowany plik KONKRETNEJ aplikacji Nuxt i wola natywne `ctx.fiber.restart()`.
   Powod odrebnego mechanizmu: kazda aplikacja Nuxt jest ladowana przez
