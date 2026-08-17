@@ -230,6 +230,47 @@ rebuildu calego obrazu (kazda zmiana buduje wszystkie trzy aplikacje na
 nowo). W zamian za to nie ma juz drugiego, rownoleglego kanalu wprowadzania
 kodu do procesu produkcyjnego omijajacego standardowy pipeline CI/CD.
 
+**Czy to jest sprzeczne z papierem (`docs/paper.md`)?** Papier krytykuje
+restart procesu + orkiestracje kontenerowa jako "coarse-grained workaround"
+dla braku fine-grained composability (Section 1.2.3, `docs/paper.md:128-136`):
+restart kasuje stan procesu i wymaga nadmiarowych replik na czas
+niedostepnosci, a granica kontenera nie wyraza zaleznosci miedzy komponentami
+dzielacymi jeden adres pamieci, wprowadzajac zbedny narzut sieciowy. Sekcja
+6.2 (`docs/paper.md:1939`) idzie dalej: proponuje, zeby rolling update
+byl wzorcem NA POZIOMIE APLIKACJI (nowy fiber + broker + stopniowe
+przesuniecie ruchu), a nie operacja infrastrukturalna ("container
+orchestration, blue-green deployment").
+
+To NIE oznacza "unikaj Kubernetesa w ogole" - oznacza "nie uzywaj granicy
+kontenera tam, gdzie komponenty dziela adres pamieci i powinny byc
+skladane w procesie". Ten repo juz stosuje wlasnie to rozroznienie:
+`home`/`product`/`cart` NIE sa trzema Deploymentami wolajacymi sie przez
+siec - sa fiberami JEDNEGO procesu (dokladnie fine-grained composability
+z papieru), a Kubernetes ponizej odpowiada WYLACZNIE za to, czego Cordis
+nie adresuje w ogole i czego papier mu nie zarzuca: rozmieszczenie replik
+CALEGO procesu na wielu maszynach, przetrwanie awarii wezla, `Service`
+jako stabilny punkt wejscia dla load balancera. Papier nie ma tu
+konkurencyjnej propozycji - Section 6.2's "cross-process invocation"
+zaklada, ze wiele procesow juz gdzies fizycznie dziala, nie mowi jak je
+tam umiescic.
+
+Prawdziwy, uczciwie przyznany kompromis jest wezszy: utracono zdolnosc
+zaktualizowania JEDNEGO modulu bez rolling restartu CALEGO procesu na
+wszystkich replikach - dokladnie ta zdolnosc, ktora Section 6.2 opisuje
+jako wzorzec aplikacyjny i ktora `@shop/remote-sync` probowal
+zaimplementowac. Usunieto go nie dlatego, ze pomysl "aktualizuj fiber bez
+restartu calego procesu" byl bledny (jest dokladnie tym, co zaleca papier),
+tylko dlatego, ze KONKRETNA implementacja (niepodpisany `fetch()` + `tar`
++ `import()` z pelnym zaufaniem procesu) byla niezweryfikowalna. Wzorzec z
+papieru dalej dziala LOKALNIE w tym repo w trybie dev (`cordis.dev.yml`,
+`config.watch` - fiber `product` przeladowuje sie bez dotykania `home`/`cart`).
+Odtworzenie go bezpiecznie w produkcji wymagaloby podpisanych/weryfikowanych
+artefaktow per-modul (np. `cosign verify` na tym samym mechanizmie atestacji
+SLSA, ktory `deploy/workflows/build-and-push.yml` juz generuje dla calego
+obrazu) plus loadera Cordis konsumujacego WYLACZNIE zweryfikowane pliki
+lokalne - to osobny, wiekszy projekt, celowo NIE podjety bez wyraznej
+prosby, bo nietrywialnie poszerza zakres.
+
 ## 9. Graceful shutdown
 
 `orchestrator/src/index.ts` lapie `SIGINT`/`SIGTERM` i woła `ctx.fiber.dispose()`

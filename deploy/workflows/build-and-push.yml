@@ -11,6 +11,25 @@
 # sha, publikowany do rejestru, a wdrozenie to zwykly rolling update k8s
 # (deploy/k8s/) - zero kodu pobieranego/rozpakowywanego przez dzialajacy
 # proces.
+#
+# Utwardzenie lancucha dostaw (ten sam poziom rygoru co przy usuwaniu
+# @shop/remote-sync - patrz ARCHITECTURE.md#8):
+#   - kazda akcja strony trzeciej (`uses:`) jest przypieta do PELNEGO commit
+#     SHA, nie do ruchomego tagu (`@v4`) - tag moze zostac przestawiony na
+#     inny commit przez przejete konto opiekuna; SHA nie moze. Wersja w
+#     komentarzu obok jest wylacznie informacyjna.
+#   - `docker/build-push-action` (zamiast golego `docker build`+`docker push`)
+#     generuje atestacje SLSA provenance + SBOM dolaczone do obrazu w GHCR -
+#     kazdy, kto pozniej pobiera obraz, moze zweryfikowac CZYM i Z CZEGO
+#     zostal zbudowany (`gh attestation verify` / `cosign verify-attestation`),
+#     zamiast ufac golemu tagowi tak jak w usunietym `@shop/remote-sync`.
+#   - `permissions:` jest ustawione per-job na minimum, jakiego ten job
+#     faktycznie potrzebuje (build-and-push: zapis do rejestru; deploy: zero -
+#     korzysta wylacznie z wlasnego kubeconfig, nie z tokena GitHuba).
+#   - `deploy` uzywa WYLACZNIE `kubectl` (preinstalowany na runnerach
+#     `ubuntu-latest`, `kubectl apply -k` ma wbudowane wsparcie kustomize) -
+#     celowo bez dodatkowej akcji/binarki `kustomize` strony trzeciej, zeby
+#     nie poszerzac powierzchni zaufania o kolejna zaleznosc.
 
 name: Build and deploy image
 
@@ -27,56 +46,75 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # wymagane przez atestacje provenance (OIDC -> Sigstore/GHCR)
+      attestations: write
     outputs:
-      image: ${{ steps.build.outputs.image }}
+      image: ${{ steps.image-ref.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Zaloguj do GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Zbuduj i wypchnij obraz (tag = git sha, niezmienny)
+      - name: Zbuduj i wypchnij obraz (tag = git sha, niezmienny) + atestacje SLSA/SBOM
         id: build
-        run: |
-          IMAGE="ghcr.io/${{ github.repository_owner }}/nuxt-cordis-shop"
-          docker build -f deploy/docker/Dockerfile -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
-          docker push "$IMAGE:${{ github.sha }}"
-          docker push "$IMAGE:latest"
-          echo "image=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/nuxt-cordis-shop:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/nuxt-cordis-shop:latest
+          provenance: true
+          sbom: true
+
+      - name: Zapisz referencje obrazu (do jobu deploy)
+        run: echo "image=ghcr.io/${{ github.repository_owner }}/nuxt-cordis-shop@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+        id: image-ref
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Aktywne WYLACZNIE gdy repo ma ustawiona zmienna vars.KUBE_DEPLOY_ENABLED
     # oraz sekret KUBE_CONFIG (kubeconfig zakodowany base64, z dostepem
     # ograniczonym do namespace `shop`) - patrz deploy/README.md#kubernetes.
     # Bez tego job jest pomijany, a obraz z build-and-push i tak jest
     # gotowy do recznego wdrozenia: `kubectl apply -k deploy/k8s`.
+    #
+    # ZALECANE (nie zaimplementowane tutaj, bo zalezy od dostawcy klastra):
+    # zastapienie dlugozyjacego sekretu KUBE_CONFIG krotkotrwalym
+    # uwierzytelnieniem przez OIDC (np. GKE Workload Identity Federation,
+    # EKS IRSA) - identyczny kierunek utwardzenia, jaki zastosowano wyzej dla
+    # publikacji obrazu (`id-token: write` + Sigstore zamiast statycznego
+    # tokenu).
     if: ${{ vars.KUBE_DEPLOY_ENABLED == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Skonfiguruj dostep do klastra
         run: |
           mkdir -p "$HOME/.kube"
+          umask 077
           echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$HOME/.kube/config"
 
-      - uses: imranismail/setup-kustomize@v2
-
-      - name: Ustaw tag obrazu i zastosuj manifesty (rolling update)
+      - name: Zastosuj manifesty i ustaw obraz na weryfikowalny digest (rolling update)
         run: |
-          cd deploy/k8s
-          kustomize edit set image "ghcr.io/${{ github.repository_owner }}/nuxt-cordis-shop=${{ needs.build-and-push.outputs.image }}"
-          kubectl apply -k .
+          kubectl apply -k deploy/k8s
+          kubectl set image deployment/shop "shop=${{ needs.build-and-push.outputs.image }}" -n shop
           kubectl rollout status deployment/shop -n shop --timeout=180s
