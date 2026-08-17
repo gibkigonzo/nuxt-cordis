@@ -54,10 +54,10 @@ Test Dockera: `docker build -f deploy/docker/Dockerfile -t shop .`
    wlasny `http.Server` na `process.env.PORT` przy imporcie (kolizja portow
    przy wielu instancjach w jednym procesie).
 
-6. **TypeScript w `packages/*` i `orchestrator/` = natywny Node type-stripping,
-   ZERO buildu.** Nie uzywaj: `enum`, parameter properties w konstruktorach
-   (`constructor(private x)`), importow wzglednych bez `.ts`. `apps/*`
-   (Nuxt/Vite/esbuild) NIE ma tych ograniczen - pelny TS jak zwykle.
+6. **TypeScript w `packages/*`, `services/*` i `orchestrator/` = natywny Node
+   type-stripping, ZERO buildu.** Nie uzywaj: `enum`, parameter properties w
+   konstruktorach (`constructor(private x)`), importow wzglednych bez `.ts`.
+   `apps/*` (Nuxt/Vite/esbuild) NIE ma tych ograniczen - pelny TS jak zwykle.
 
 7. **Porty 3000/3001/3002/8080 moga kolidowac z innymi projektami na tej
    maszynie** (raz kolidowaly z niezwiazanym projektem `prawniczkawpracy`).
@@ -70,18 +70,34 @@ Test Dockera: `docker build -f deploy/docker/Dockerfile -t shop .`
   `cordis.yml` (`name: '@shop/nuxt-wrapper'`, wlasny `port`/`route`/`inject`).
   Zero zmian w `packages/*` - wrapper jest generyczny. Pelny przyklad:
   `deploy/checkout-module-plan.md`.
-- Nowy koefekt (usluga wspoldzielona): nowy pakiet w `packages/`, klasa
-  `extends Service` (wzor: `packages/cart-service`), wpis w `cordis.yml`.
-- Zmiana routingu brokera: `packages/router-service` (tabela tras) +
+- Nowy koefekt (cos, co inny komponent bedzie `inject`-owal): nowy pakiet w
+  `services/`, klasa `extends Service` (wzor: `services/cart-service`), wpis
+  w `cordis.yml`. `packages/` jest dla kodu BEZ cyklu zycia Cordisa (zwykle
+  biblioteki, np. `packages/shared`) LUB komponentow Cordisa, ktore niczego
+  nie dostarczaja innym (np. `packages/broker`) - `services/` tylko dla
+  faktycznych dostawcow koefektow.
+- Zmiana routingu brokera: `services/router-service` (tabela tras) +
   `packages/broker` (proxy) - NIE hardkoduj portow poza `cordis.yml`.
 - Deployment: `deploy/README.md`.
 
 ## Status i ograniczenia
 
-Patrz `README.md#status-weryfikacji`. W skrocie: lokalny dev, Docker i
-mechanizm `@shop/remote-sync` (lokalnie, z mockiem) sa faktycznie
-uruchomione i sprawdzone. Cloudflare Worker (`deploy/cloudflare/manifest-worker`)
-NIE zostal wdrozony na prawdziwym koncie (brak danych uwierzytelniajacych w
-tej sesji) - zweryfikuj przed produkcyjnym uzyciem. Czwarty modul
-(`apps/checkout`) jest tylko zaplanowany (`deploy/checkout-module-plan.md`),
-celowo niezaimplementowany.
+Patrz `README.md#status-weryfikacji`. W skrocie: lokalny dev i Docker sa
+faktycznie uruchomione i sprawdzone. Manifesty Kubernetes (`deploy/k8s/`) i
+pipeline CI (`deploy/workflows/build-and-push.yml`) sa napisane, ale NIE
+uruchomione end-to-end na prawdziwym klastrze/rejestrze w tej sesji (brak
+danych uwierzytelniajacych) - zweryfikuj przed produkcyjnym uzyciem, patrz
+`deploy/README.md#kubernetes`. Czwarty modul (`apps/checkout`) jest tylko
+zaplanowany (`deploy/checkout-module-plan.md`), celowo niezaimplementowany.
+
+**WAZNE:** wczesniejszy mechanizm `@shop/remote-sync` + Cloudflare R2/KV
+(dynamiczne pobieranie i rozpakowywanie `.tar.gz` z kodem modulow w
+dzialajacym procesie, bez weryfikacji integralnosci/sandboxa/autoryzacji)
+zostal **celowo usuniety** ze wzgledow bezpieczenstwa - patrz
+`ARCHITECTURE.md#8`. NIE przywracaj tego wzorca (dynamiczny `import()` z
+URL-a obliczanego w runtime, `fetch()` + rozpakowanie archiwum na dysk
+procesu produkcyjnego) bez wyraznej prosby uzytkownika i swiadomosci tych
+kompromisow. Aktualny model: kod trafia do procesu WYLACZNIE przez build
+obrazu (`deploy/docker/Dockerfile`) + deployment k8s (`deploy/k8s/`); cordis
+pozostaje orchestratorem kodu juz zapieczonego w obrazie, nie dystrybutorem
+kodu przez siec.

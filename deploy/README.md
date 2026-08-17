@@ -1,9 +1,13 @@
 # Deployment
 
-Dwie sciezki, opisane w `PlAn.md`/`deploy.md`. Status weryfikacji kazdej -
-patrz `../README.md#status-weryfikacji`.
+Jedna udokumentowana, docelowa sciezka: **buduj jeden niezmienny obraz OCI w
+CI, publikuj do rejestru, wdrazaj rolling update'em w Kubernetesie.** `docker
+compose` ponizej to jedynie lokalny odpowiednik tego samego obrazu do testow
+manualnych, nie osobny model produkcyjny.
 
-## Docker (self-hosted) {#docker}
+Status weryfikacji kazdej czesci - patrz `../README.md#status-weryfikacji`.
+
+## Docker (build lokalny / smoke test) {#docker}
 
 Jeden kontener = caly system (jeden proces Node, jeden publiczny port: 8080).
 Zweryfikowane w tym repo: `docker build`, `docker run`, ruch HTTP przez
@@ -26,93 +30,136 @@ lub przez compose:
 docker compose -f deploy/docker/docker-compose.yml up --build
 ```
 
-**Aktualizacja jednej aplikacji w tym modelu = rebuild calego obrazu** (bo
-obraz jest niezmiennym artefaktem calego systemu). Jesli potrzebujesz
-aktualizowac pojedyncze moduly bez rebuildu calego obrazu/kontenera, patrz
-sekcja ponizej (Cloudflare R2/KV) - to jest DOKLADNIE problem, ktory ten
-model rozwiazuje.
+Ten sam `Dockerfile` jest jedynym zrodlem obrazu uzywanego pozniej w
+Kubernetesie - `docker build` lokalnie i `docker build` w CI (patrz
+`deploy/workflows/build-and-push.yml`) to identyczny proces, tylko wynik
+trafia w innego miejsce (rejestr zamiast lokalnego demona).
 
-## Cloudflare R2/KV + GitHub Actions (`deploy.md`) {#cloudflare}
+## Kubernetes (produkcyjna sciezka wdrozenia) {#kubernetes}
 
-Realizuje dokladnie flow z `deploy.md`: pipeline buduje TYLKO zmieniony
-modul, publikuje go jako artefakt pod URL-em (R2), aktualizuje "source of
-truth" configu (KV przez maly Worker), a dzialajacy orchestrator sam
-wykrywa zmiane i doklada/aktualizuje/usuwa modul **bez restartu procesu**.
+Zastepuje wczesniejszy model oparty o Cloudflare R2/KV + `@shop/remote-sync`
+(dynamiczne pobieranie i rozpakowywanie `.tar.gz` z kodem modulow w
+dzialajacym procesie). Ten model zostal **swiadomie usuniety** z powodow
+bezpieczenstwa - brak weryfikacji integralnosci artefaktu/manifestu, brak
+sandboxa przy rozpakowaniu, kod importowany z pelnym dostepem do procesu i
+wspoldzielonych koefektow, oraz brak jakiejkolwiek bramki autoryzacyjnej poza
+kontrola dostepu do `main`/sekretow CI. Pelne uzasadnienie: `../ARCHITECTURE.md#8`.
 
-WAZNE (patrz `../ARCHITECTURE.md#cloudflare-workers` po pelne wyjasnienie):
-sam orchestrator **nie dziala na Cloudflare Workers** (techniczne
-ograniczenia: brak `node:http`, brak systemu plikow, brak dynamicznego
-`import()` dowolnego URL). Dziala na zwyklym, dlugozyjacym hoscie Node (VM,
-Docker na dowolnym providerze, Fly.io, Render, DigitalOcean App Platform...).
-Cloudflare dostarcza WYLACZNIE: storage artefaktow (R2) i "source of truth"
-configu (KV + Worker).
+**Nowy model: kod NIGDY nie jest pobierany przez siec w dzialajacym
+procesie.** Aktualizacja KTOREGOKOLWIEK modulu (w tym pojedynczej aplikacji
+Nuxt) = nowy build calego obrazu (git sha jako tag) + standardowy rolling
+update. Cordis w tym modelu pozostaje WYLACZNIE orchestratorem kodu juz
+zapieczonego w obrazie - `cordis.yml` jest czytany raz przy starcie procesu,
+bez zadnego reconcilera zdalnej konfiguracji.
 
 ### Komponenty
 
-| Komponent | Gdzie | Co robi |
-|---|---|---|
-| `deploy/workflows/deploy-module.yml` | GitHub Actions | wykrywa zmieniony `apps/<id>`, buduje TYLKO go, pakuje `.output` w `.tar.gz`, wrzuca na R2, zapisuje wpis w KV |
-| `deploy/cloudflare/manifest-worker` | Cloudflare Worker | skleja wpisy KV w `GET /manifest.json` |
-| `packages/remote-sync` | proces orchestratora (Node) | odpytuje `/manifest.json`, pobiera zmienione artefakty, woła `ctx.loader.create/update/remove` |
+| Komponent | Co robi |
+|---|---|
+| `deploy/docker/Dockerfile` | buduje CALY system (home + product + cart + orchestrator) w jeden obraz |
+| `deploy/workflows/build-and-push.yml` | CI: `docker build` + `docker push` do GHCR (tag = git sha, niezmienny), opcjonalnie `kubectl apply -k` |
+| `deploy/k8s/` | manifesty: `namespace.yaml`, `deployment.yaml` (RollingUpdate, `maxUnavailable: 0`, readiness/liveness probe na `/`, non-root, `readOnlyRootFilesystem`), `service.yaml`, `kustomization.yaml` |
 
-### Konfiguracja (jednorazowa)
-
-1. **R2**: `wrangler r2 bucket create <nazwa>` - ustaw `vars.R2_BUCKET` w
-   ustawieniach repo GitHub oraz publiczny URL bucketu jako `vars.R2_PUBLIC_BASE_URL`
-   (Public Development URL lub wlasna domena podpieta pod bucket).
-2. **KV**: `wrangler kv namespace create MANIFEST_KV` - id namespace wpisz w
-   `deploy/cloudflare/manifest-worker/wrangler.toml` (`[[kv_namespaces]] id = ...`)
-   oraz jako `vars.KV_NAMESPACE_ID` w ustawieniach repo GitHub.
-3. **Worker**: `cd deploy/cloudflare/manifest-worker && pnpm install && pnpm run deploy`
-   - zanotuj publiczny URL Workera (np. `https://nuxt-cordis-manifest.<konto>.workers.dev`).
-4. **Sekrety GitHub Actions**: `CLOUDFLARE_API_TOKEN` (token z uprawnieniami
-   Workers KV Storage: Edit + Workers R2 Storage: Edit), `CLOUDFLARE_ACCOUNT_ID`.
-5. **Config per modul**: `vars.MODULE_CONFIG_<id>` (JSON, np. dla `checkout`:
-   `{"port":3003,"inject":["cart","router"],"route":"/checkout"}`) - patrz
-   `deploy/checkout-module-plan.md` po przyklad.
-6. Skopiuj `deploy/workflows/deploy-module.yml` do `.github/workflows/` w
-   repo (trzymany poza `.github/` celowo, jako szablon do przejrzenia przed
-   aktywacja - patrz komentarz na gorze pliku).
-
-### Uruchomienie orchestratora z reconcilerem zdalnej konfiguracji
-
-Dopisz do configu orchestratora (obok lub zamiast lokalnych wpisow z
-`cordis.yml`) wpis:
-
-```yaml
-- id: remote-sync
-  name: '@shop/remote-sync'
-  config:
-    manifestUrl: https://nuxt-cordis-manifest.<konto>.workers.dev/manifest.json
-    pollInterval: 15000
-    cacheDir: .remote-cache
-```
-
-Od tej chwili kazdy `git push` zmieniajacy `apps/<id>/**` (po przejsciu przez
-pipeline) pojawi sie w dzialajacym procesie jako nowy/zaktualizowany fiber -
-bez restartu, bez przestoju pozostalych modulow (Corollary 62 z papieru:
-odejscie/dodanie jednego fibera nie wplywa na pozostale).
-
-### Test lokalny bez konta Cloudflare
-
-`deploy/scripts/mock-registry-server.mjs` udaje pare R2+KV+Worker jednym
-prostym serwerem HTTP (`GET /manifest.json`, `GET /artifacts/:id`,
-`POST /publish`) - dokladnie tym mechanizmem zweryfikowano `@shop/remote-sync`
-w tym repo (patrz `../README.md#status-weryfikacji`):
+### Uruchomienie recznie (dowolny klaster)
 
 ```sh
-node deploy/scripts/mock-registry-server.mjs &         # domyslnie :7000
-node deploy/scripts/publish-module.mjs product /tmp/out # buduje .tar.gz z apps/product/.output
-curl -X POST "http://localhost:7000/publish?id=product&version=v1&config=%7B%22port%22%3A3001%2C%22inject%22%3A%5B%22cart%22%2C%22product%22%2C%22router%22%5D%2C%22route%22%3A%22%2Fproduct%22%7D&file=/tmp/out/product-v1.tar.gz"
+docker build -f deploy/docker/Dockerfile -t ghcr.io/<owner>/nuxt-cordis-shop:<tag> .
+docker push ghcr.io/<owner>/nuxt-cordis-shop:<tag>
+
+kubectl apply -k deploy/k8s   # baza (namespace/Deployment/Service) - obraz domyslnie :latest
+kubectl set image deployment/shop shop=ghcr.io/<owner>/nuxt-cordis-shop:<tag> -n shop
+kubectl rollout status deployment/shop -n shop
 ```
+
+(`kubectl apply -k` ma wbudowane wsparcie kustomize - nie potrzeba osobnej
+binarki `kustomize`. `docker/build-push-action` w CI podaje zamiast `<tag>`
+niezmienny digest (`@sha256:...`) - preferuj to samo recznie, jesli masz
+digest, zamiast tagu, ktory teoretycznie moze zostac nadpisany w rejestrze.)
+
+Rollback do poprzedniej wersji (bez rebuildu) - standardowy mechanizm k8s,
+nie cos wlasnego:
+
+```sh
+kubectl rollout undo deployment/shop -n shop
+```
+
+Ruch do klastra (Ingress/LoadBalancer przed `Service shop`) zalezy od
+dostawcy klastra i celowo nie jest tu zalozony - dopisz wlasny `Ingress`
+obok `deploy/k8s/service.yaml` (lub `kubectl port-forward svc/shop 8080:80`
+do testow).
+
+### Aktywacja pipeline'u CI
+
+1. Skopiuj `deploy/workflows/build-and-push.yml` do `.github/workflows/` w
+   repo (trzymany poza `.github/` celowo, jako szablon do przejrzenia przed
+   aktywacja - identyczna konwencja jak poprzedni, usuniety
+   `deploy-module.yml`).
+2. Job `build-and-push` dziala od razu (potrzebuje jedynie domyslnego
+   `secrets.GITHUB_TOKEN` do publikacji na `ghcr.io`).
+3. Job `deploy` jest domyslnie POMINIETY. Aby go wlaczyc:
+   - ustaw `vars.KUBE_DEPLOY_ENABLED=true` w ustawieniach repo GitHub,
+   - dodaj sekret `KUBE_CONFIG` = kubeconfig (base64) z dostepem
+     ograniczonym do namespace `shop` w klastrze docelowym.
+4. Bez kroku 3 obraz i tak zostaje opublikowany - wdrozenie recznym
+   `kubectl apply -k deploy/k8s` (sekcja wyzej) dziala niezaleznie.
+
+### Utwardzenie lancucha dostaw (ten sam rygor co przy usuwaniu remote-sync)
+
+Usuniety `@shop/remote-sync` mial cztery konkretne problemy (brak integralnosci,
+brak sandboxa, pelny dostep procesu, brak autoryzacji - patrz
+`../ARCHITECTURE.md#8`). Nowy pipeline adresuje analogiczne kategorie ryzyka
+we WLASNYM lancuchu dostaw (CI -> rejestr -> klaster):
+
+- **Integralnosc:** kazda akcja strony trzeciej w `build-and-push.yml` jest
+  przypieta do pelnego commit SHA (nie do ruchomego tagu typu `@v4`), a obraz
+  jest budowany przez `docker/build-push-action` z `provenance: true` +
+  `sbom: true` - kazdy pobierajacy obraz z GHCR moze zweryfikowac, CZYM
+  faktycznie zostal zbudowany (`gh attestation verify oci://ghcr.io/<owner>/nuxt-cordis-shop:<tag> --owner <owner>`),
+  zamiast ufac golemu tagowi.
+- **Deployment po digescie, nie po tagu:** job `deploy` uzywa
+  `kubectl set image deployment/shop shop=ghcr.io/<owner>/nuxt-cordis-shop@sha256:...`
+  (digest z outputu builda), nie ruchomego `:latest` - `latest` w
+  `deploy/k8s/deployment.yaml` jest wylacznie wartoscia domyslna dla
+  recznego `kubectl apply -k` przy pierwszym wdrozeniu.
+- **Minimalne uprawnienia per-job:** `permissions:` jest ustawione osobno
+  dla kazdego joba (build-and-push: zapis do rejestru + `id-token` do
+  atestacji; deploy: brak zadnych uprawnien do GitHuba, korzysta tylko z
+  wlasnego `KUBE_CONFIG`), nie jeden szeroki blok na caly workflow.
+- **Zero dodatkowych binarek/akcji trzecich stron ponad niezbedne minimum:**
+  `deploy` uzywa WYLACZNIE `kubectl` (preinstalowany na `ubuntu-latest`,
+  `apply -k` ma wbudowane wsparcie kustomize) - celowo bez osobnej
+  akcji/binarki `kustomize`, zeby nie poszerzac powierzchni zaufania.
+- **Autoryzacja:** trigger to `push` do `main` (chronionego brancha z
+  wymaganym review, jesli tak skonfigurowano ochrone brancha w ustawieniach
+  repo - to poza zakresem samego workflow) - jedyna bramka to nadal kontrola
+  dostepu do `main`, identycznie jak przy poprzednim modelu, ale teraz bez
+  drugiego, rownoleglego kanalu (nieautoryzowanego zdalnego `fetch()+tar`)
+  omijajacego ten sam pipeline.
+
+**ZALECANE, NIE zaimplementowane** (zalezy od dostawcy klastra, wiec celowo
+pozostawione jako rekomendacja a nie kod): zastapienie dlugozyjacego sekretu
+`KUBE_CONFIG` krotkotrwalym uwierzytelnieniem przez OIDC (GKE Workload
+Identity Federation, EKS IRSA lub odpowiednik) - ten sam kierunek co juz
+zastosowany dla publikacji obrazu (`id-token: write` + Sigstore zamiast
+statycznego tokenu).
+
+**WAZNE:** ten pipeline (jak poprzedni, oparty o Cloudflare) NIE zostal
+uruchomiony end-to-end na prawdziwym klastrze/rejestrze w tej sesji (brak
+dostepnych danych uwierzytelniajacych) - manifesty i workflow sa napisane
+wedlug udokumentowanego, poprawnego API (`kubectl`/GHCR/`docker/build-push-action`),
+ale zweryfikuj przed uzyciem produkcyjnym. Patrz `../README.md#status-weryfikacji`.
 
 ## Dodanie nowego (czwartego+) modulu
 
 Zero zmian w `@shop/nuxt-wrapper`/`@shop/broker`/serwisach - dowolna nowa
 aplikacja Nuxt zbudowana Nitro-presetem `node-listener` dziala od razu.
-Kroki (identyczne w obu modelach deploymentu):
+Kroki:
 
 1. Napisz aplikacje w `apps/<id>` (kopiujac strukture `apps/cart`).
-2. Dopisz wpis w `cordis.yml` (Docker) LUB opublikuj przez pipeline (Cloudflare) -
-   patrz `deploy/checkout-module-plan.md` po gotowy, w pelni rozpisany przyklad
-   (modul `checkout`, celowo jeszcze nie zaimplementowany).
+2. Dopisz wpis w `cordis.yml` (patrz `deploy/checkout-module-plan.md` po
+   gotowy, w pelni rozpisany przyklad - modul `checkout`, celowo jeszcze nie
+   zaimplementowany).
+3. Dopisz `COPY --from=build /app/apps/<id>/.output ...` w
+   `deploy/docker/Dockerfile` (i odpowiedni wpis w `deploy/workflows/build-and-push.yml`,
+   jesli chcesz osobny filtr `paths`).
+4. Normalny `git push` -> CI buduje nowy obraz -> rolling update.

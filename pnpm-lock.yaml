@@ -22,7 +22,7 @@ importers:
         version: link:../../packages/shared
       nuxt:
         specifier: ^4.5.2
-        version: 4.5.2(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7))(@oxc-project/types@0.144.0)(@types/node@24.13.3)(@vue/compiler-sfc@3.5.41)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1)(lightningcss@1.33.0)(magicast@0.5.4)(rolldown@1.2.4)(rollup-plugin-visualizer@7.1.1(rolldown@1.2.4)(rollup@4.62.4))(rollup@4.62.4)(srvx@0.11.22)(terser@5.50.0)(typescript@5.9.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(yaml@2.9.0))(yaml@2.9.0)
+        version: 4.5.2(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7))(@oxc-project/types@0.144.0)(@types/node@24.13.3)(@vue/compiler-sfc@3.5.41)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1)(lightningcss@1.33.0)(magicast@0.5.4)(rolldown@1.2.4)(rollup-plugin-visualizer@7.1.1(rolldown@1.2.4)(rollup@4.62.4))(rollup@4.62.4)(terser@5.50.0)(typescript@5.9.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(yaml@2.9.0))(yaml@2.9.0)
       vue:
         specifier: ^3.5.41
         version: 3.5.41(typescript@5.9.3)
@@ -38,7 +38,7 @@ importers:
     dependencies:
       nuxt:
         specifier: ^4.5.2
-        version: 4.5.2(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7))(@oxc-project/types@0.144.0)(@types/node@24.13.3)(@vue/compiler-sfc@3.5.41)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1)(lightningcss@1.33.0)(magicast@0.5.4)(rolldown@1.2.4)(rollup-plugin-visualizer@7.1.1(rolldown@1.2.4)(rollup@4.62.4))(rollup@4.62.4)(terser@5.50.0)(typescript@5.9.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(yaml@2.9.0))(yaml@2.9.0)
+        version: 4.5.2(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7))(@oxc-project/types@0.144.0)(@types/node@24.13.3)(@vue/compiler-sfc@3.5.41)(db0@0.3.4)(esbuild@0.28.2)(ioredis@5.11.1)(lightningcss@1.33.0)(magicast@0.5.4)(rolldown@1.2.4)(rollup-plugin-visualizer@7.1.1(rolldown@1.2.4)(rollup@4.62.4))(rollup@4.62.4)(srvx@0.11.22)(terser@5.50.0)(typescript@5.9.3)(vite@8.2.1(@types/node@24.13.3)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(yaml@2.9.0))(yaml@2.9.0)
       vue:
         specifier: ^3.5.41
         version: 3.5.41(typescript@5.9.3)
@@ -84,19 +84,16 @@ importers:
         version: link:../packages/broker
       '@shop/cart-service':
         specifier: workspace:*
-        version: link:../packages/cart-service
+        version: link:../services/cart-service
       '@shop/nuxt-wrapper':
         specifier: workspace:*
         version: link:../packages/nuxt-wrapper
       '@shop/product-service':
         specifier: workspace:*
-        version: link:../packages/product-service
-      '@shop/remote-sync':
-        specifier: workspace:*
-        version: link:../packages/remote-sync
+        version: link:../services/product-service
       '@shop/router-service':
         specifier: workspace:*
-        version: link:../packages/router-service
+        version: link:../services/router-service
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
@@ -108,16 +105,7 @@ importers:
         version: 1.7.0(cordis@4.0.0-rc.8)
       '@shop/router-service':
         specifier: workspace:*
-        version: link:../router-service
-      '@shop/shared':
-        specifier: workspace:*
-        version: link:../shared
-      cordis:
-        specifier: ^4.0.0-rc.8
-        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
-
-  packages/cart-service:
-    dependencies:
+        version: link:../../services/router-service
       '@shop/shared':
         specifier: workspace:*
         version: link:../shared
@@ -137,32 +125,35 @@ importers:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
 
-  packages/product-service:
-    dependencies:
-      '@shop/shared':
-        specifier: workspace:*
-        version: link:../shared
-      cordis:
-        specifier: ^4.0.0-rc.8
-        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
-
-  packages/remote-sync:
-    dependencies:
-      cordis:
-        specifier: ^4.0.0-rc.8
-        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
-
-  packages/router-service:
-    dependencies:
-      '@shop/shared':
-        specifier: workspace:*
-        version: link:../shared
-      cordis:
-        specifier: ^4.0.0-rc.8
-        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
-
   packages/shared:
     devDependencies:
+      cordis:
+        specifier: ^4.0.0-rc.8
+        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
+
+  services/cart-service:
+    dependencies:
+      '@shop/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      cordis:
+        specifier: ^4.0.0-rc.8
+        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
+
+  services/product-service:
+    dependencies:
+      '@shop/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      cordis:
+        specifier: ^4.0.0-rc.8
+        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
+
+  services/router-service:
+    dependencies:
+      '@shop/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
