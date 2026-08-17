@@ -82,12 +82,25 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
 
     let active: ActiveInstance | undefined
     let unregisterRoute: (() => void) | undefined
+    // `disposed` odcina KAZDA aktywacje w toku (nawet zakolejkowana, patrz
+    // activationChain nizej) w momencie, gdy fiber jest dysponowany - bez tego
+    // aktywacja zakonczona PO teardownie odtworzylaby serwer/wpis w routerze,
+    // ktorych juz nic pozniej by nie posprzatalo (bridge dla `config.id` jest
+    // wtedy juz usuniety, wiec taka "ozywiona" instancja i tak nie moglaby
+    // obslugiwac requestow).
+    let disposed = false
+    // Serializuje wszystkie wywolania activate() (poczatkowy boot ORAZ kazde
+    // kolejne wywolanie z watchera) - bez tego dwa rownolegle activate() (np.
+    // watcher odpala sie, zanim poczatkowy boot zdazyl ustawic `active`) oba
+    // widza `active === undefined`, oba licza `bindPort = config.port` i
+    // wpadaja w wyscig o ten sam port (EADDRINUSE dla przegranego).
+    let activationChain: Promise<void> = Promise.resolve()
 
     const registerRoute = (port: number) => {
       if (!config.route || !inject.includes('router')) return
       const router = ctx2.get('router')
       // Router.register() z tym samym `id` co poprzednio NADPISUJE wpis (patrz
-      // packages/router-service) - stary, nigdy-niewywolany disposer jest bezpiecznie
+      // services/router-service) - stary, nigdy-niewywolany disposer jest bezpiecznie
       // martwy, bo jego wewnetrzny check referencji nie trafi juz w nowy wpis.
       unregisterRoute = router?.register(config.route as string, { host, port, id: config.id })
     }
@@ -97,9 +110,12 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
      * port przy pierwszym boocie uzywamy `config.port`, przy kazdej kolejnej podmianie
      * `0` - zeby nowa instancja mogla wystartowac OBOK jeszcze dzialajacej starej).
      * Dopiero gdy nowa faktycznie nasluchuje, router jest przelaczany na nia - i
-     * DOPIERO POTEM zamykana jest stara.
+     * DOPIERO POTEM zamykana jest stara. Wolane WYLACZNIE przez `activate()` ponizej,
+     * ktore serializuje wywolania - nigdy bezposrednio.
      */
-    const activate = async (): Promise<void> => {
+    const doActivate = async (): Promise<void> => {
+      if (disposed) return
+
       const dir = resolveDir(ctx2, config.dir)
       const entryPath = join(dir, entryRel)
       if (!existsSync(entryPath)) {
@@ -117,6 +133,10 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
       const specifier = toBridgedSpecifier(entryHref, config.id)
 
       const mod = (await import(/* @vite-ignore */ specifier)) as BuiltModuleExports
+      // Fiber mogl zostac dysponowany, gdy czekalismy na import() - jeszcze nic nie
+      // otworzylismy, wiec wystarczy po prostu wyjsc.
+      if (disposed) return
+
       const listener = mod.listener ?? mod.handler
       if (typeof listener !== 'function') {
         throw new Error(
@@ -134,6 +154,13 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
           resolvePromise()
         })
       })
+      if (disposed) {
+        // Fiber zostal dysponowany, gdy serwer juz nasluchiwal - zamknij go od razu,
+        // NIE dotykaj `active`/routera (te sa juz posprzatane przez teardown).
+        await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()))
+        return
+      }
+
       const address = server.address()
       const port = typeof address === 'object' && address ? address.port : bindPort
 
@@ -144,21 +171,42 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
           ? `[${config.id}] nowa instancja nasluchuje na http://${host}:${port}, przelaczam ruch...`
           : `[${config.id}] nasluchuje na http://${host}:${port} (${dir})`,
       )
-      // Od tej chwili NOWY ruch trafia do nowej instancji (Map.set jest atomowe w
-      // jednowatkowym event loopie Node - brak okna z niespojnym stanem).
-      registerRoute(port)
-
-      if (previous) {
-        // server.close() przestaje przyjmowac NOWE polaczenia, ale odsacza (drain)
-        // te juz trwajace - zaden request w locie do starej instancji nie jest zrywany.
-        await new Promise<void>((resolvePromise) => previous.server.close(() => resolvePromise()))
-        ctx2.logger.info(`[${config.id}] stara instancja (${previous.port}) zamknieta - podmiana zakonczona`)
+      try {
+        // Od tej chwili NOWY ruch trafia do nowej instancji (Map.set jest atomowe w
+        // jednowatkowym event loopie Node - brak okna z niespojnym stanem).
+        registerRoute(port)
+      } finally {
+        // W `finally`, zeby stara instancja zostala zamknieta NAWET jesli
+        // registerRoute() rzuci (np. router.register() na zajetym przez inny `id`
+        // prefiksie) - inaczej `previous` zostaje otwarty na zawsze, bez zadnej
+        // referencji, ktora mogla by go pozniej zamknac.
+        if (previous) {
+          // server.close() przestaje przyjmowac NOWE polaczenia, ale odsacza (drain)
+          // te juz trwajace - zaden request w locie do starej instancji nie jest zrywany.
+          await new Promise<void>((resolvePromise) => previous.server.close(() => resolvePromise()))
+          ctx2.logger.info(`[${config.id}] stara instancja (${previous.port}) zamknieta - podmiana zakonczona`)
+        }
       }
+    }
+
+    const activate = (): Promise<void> => {
+      const run = activationChain.catch(() => {}).then(doActivate)
+      // Kolejny caller czeka na TEN run (sukces lub blad ignorowany tylko na
+      // potrzeby samego lancucha) - blad z `run` i tak trafia do TEGO callera,
+      // ktory na niego czeka bezposrednio.
+      activationChain = run.catch(() => {})
+      return run
     }
 
     ctx2.effect(async () => {
       await activate()
       return async () => {
+        disposed = true
+        // Czekaj, az kazda aktywacja w toku/zakolejkowana faktycznie sie zakonczy
+        // (normalnie, lub przez wczesne wyjscie z powodu `disposed` powyzej) -
+        // inaczej mogla by dokonczyc sie PO tym teardownie i odtworzyc serwer/
+        // wpis w routerze, ktorych juz nic by nie posprzatalo.
+        await activationChain.catch(() => {})
         unregisterRoute?.()
         deleteBridge(config.id)
         if (active) {
