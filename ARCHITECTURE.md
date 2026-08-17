@@ -43,12 +43,12 @@ await new Promise((resolve) => server.close(resolve))
 
 Zalety tego podejscia (potwierdzone empirycznie):
 - Zero zaleznosci od wewnetrznych/niestabilnych API `@nuxt/kit`.
-- Ten sam mechanizm dziala identycznie dla aplikacji budowanej lokalnie
-  (`apps/product`) i pobranej zdalnie przez `@shop/remote-sync`
-  (`.remote-cache/<id>`) - artefakt to zawsze ten sam ksztalt katalogu
-  (`<dir>/.output/server/index.mjs`).
-- Bezposrednio odpowiada modelowi deploymentu z `deploy.md`: "moduly sa
-  ladowane przez URL" - zbudowany plik JEST modulem.
+- Artefakt to zawsze ten sam ksztalt katalogu (`<dir>/.output/server/index.mjs`)
+  niezaleznie od tego, ktora aplikacja go produkuje - `cordis.yml` wskazuje
+  na katalog na dysku (`apps/<id>`), zapieczony w obrazie na etapie builda
+  (patrz `deploy/docker/Dockerfile`), NIE pobierany przez siec w runtime
+  (patrz sekcja 8 nizej po uzasadnienie, dlaczego wczesniejszy model
+  dynamicznego pobierania kodu zostal usuniety).
 
 ## 2. Bridge: jak Nuxt (osobny bundle) dociera do zywego `ctx`
 
@@ -174,34 +174,61 @@ niewykorzystywanej funkcji "na zapas" (zasada z instrukcji: nie budowac
 niepotrzebnych abstrakcji) - jest to udokumentowane rozszerzenie, nie
 zaimplementowana-ale-martwa funkcjonalnosc.
 
-## 8. Cloudflare Workers: co jest, a co NIE jest tam uruchomione {#cloudflare-workers}
+## 8. Dlaczego usunieto dynamiczne pobieranie kodu przez siec (i co jest zamiast) {#dynamic-code-loading}
 
-`deploy.md` opisuje orchestrator dzialajacy "na Cloudflare Workers". To NIE
-jest technicznie osiagalne dla TEGO procesu wprost:
+Wczesniejsza wersja tego repo (`docs/deploy.md`, historyczny plan) realizowala
+model, w ktorym `@shop/remote-sync` okresowo odpytywal zdalny manifest
+(Cloudflare KV przez maly Worker, `deploy/cloudflare/manifest-worker`),
+pobieral zmienione moduly jako archiwa `.tar.gz` z Cloudflare R2 i wolal
+`ctx.loader.create/update/remove` na dzialajacym procesie - bez restartu.
+Mechanizm dzialal (zweryfikowany lokalnie z mockiem,
+`deploy/scripts/mock-registry-server.mjs`), ale analiza bezpieczenstwa tego
+podejscia wykazala fundamentalne problemy, przez ktore zostal **calkowicie
+usuniety** (nie: wylaczony/opcjonalny - usuniety z kodu):
 
-- Workers nie maja `node:http`/wielu jednoczesnych `http.Server` (a wrapper
-  otwiera jeden per instancja Nuxt),
-- Workers nie maja dostepu do systemu plikow (a Nitro/Nuxt SSR + nasz bridge
-  operuja na plikach `.output/server/*`),
-- Workers nie moga dynamicznie `import()` dowolnego URL w runtime z pelnym
-  Node-owym resolverem modulow.
+- **Brak weryfikacji integralnosci.** `fetch()` na manifest i artefakt bez
+  checksumy, podpisu (sigstore/minisign) czy pinningu do konkretnego
+  commit-SHA. Pole `version` bylo tylko trigger'em reload'u, nie
+  weryfikowanym hashem tresci.
+- **Brak sandboxa przy rozpakowaniu.** `tar -xzf` bezposrednio na dysk hosta
+  procesu produkcyjnego - zero whitelisty sciezek, zero ochrony przed
+  zip-slip/decompression bomb.
+- **Zaimportowany kod dostawal pelne uprawnienia procesu.** Zwykly
+  `import()` w TYM SAMYM procesie co orchestrator, z dostepem przez
+  `packages/shared/src/bridge.ts` do zywego `Context` cordis - czyli do
+  wszystkich koefektow (`cart`, `product`, `router`), `process.env` i FS.
+  Brak izolacji (`ctx.isolate` pozostaje nieuzywane, patrz sekcja 7).
+- **Jedyna "autoryzacja" to dostep do `main`/sekretow CI.** Sam manifest i
+  endpoint artefaktu byly publicznymi GET-ami bez tokenow - kazdy z prawem
+  merge'a do `main` mogl wstrzyknac dowolny kod do produkcyjnego procesu w
+  ciagu jednego cyklu pollingu (domyslnie 15s).
+- **All-or-nothing hot-swap.** Zero canary/staged rollout, zero automatycznego
+  rollbacku przy bledzie ladowania - blad byl tylko logowany
+  (`ctx.logger.warn`), a kolejny poll probowal ponownie.
 
-**Co faktycznie dziala na Cloudflare** w tym repo: **R2** (przechowywanie
-zbudowanych artefaktow, `deploy/workflows/deploy-module.yml`) i **KV +
-Worker** (`deploy/cloudflare/manifest-worker`) jako "source of truth" configu.
-Sam **orchestrator dziala na zwyklym, dlugozyjacym hoscie Node** (VM, Docker,
-Fly.io, Render - patrz `deploy/README.md`), gdzie `@shop/remote-sync`
-okresowo odpytuje Workera i sam decyduje, co przeladowac - **bez** restartu
-calego procesu. To w pelni realizuje SENS `deploy.md` (build tylko zmienionego
-modulu, brak przestoju pozostalych, brak "cold start" calej aplikacji), tylko
-bez dosl ownego "orchestrator jako Worker".
+**Model zastepczy (aktualny, patrz `deploy/README.md#kubernetes`):**
+dystrybucja kodu i orkiestracja runtime sa teraz jawnie rozdzielone.
+`deploy/workflows/build-and-push.yml` buduje CALY system w jeden niezmienny
+obraz OCI (git sha jako tag) i publikuje go do rejestru (GHCR) - standardowy
+lancuch zaufania CI/rejestr, bez wlasnego protokolu dystrybucji. Kubernetes
+(`deploy/k8s/`) wykonuje deployment: `RollingUpdate` z `maxUnavailable: 0`
+(zero przestoju przy aktualizacji, analogicznie do wczesniejszego celu
+"bez restartu", ale przez mechanizm, ktory k8s juz gwarantuje i testuje),
+readiness/liveness probes, oraz standardowy `kubectl rollout undo` jako
+rollback. **Cordis w tym modelu jest WYLACZNIE orchestratorem kodu juz
+zapieczonego w obrazie** - `cordis.yml` jest czytany raz przy starcie
+procesu (`orchestrator/src/index.ts`), zero reconcilera zdalnej
+konfiguracji, zero `fetch()`/`import()` z URL-a obliczanego w runtime poza
+lokalnymi plikami w obrazie. Dodanie nowego modulu (patrz
+`deploy/checkout-module-plan.md`) to teraz: zmiana kodu -> `cordis.yml` ->
+normalny `git push` -> CI buduje nowy obraz -> rolling update - bez zadnej
+sciezki, w ktorej kod trafia do produkcyjnego procesu bez przejscia przez
+review + CI.
 
-Mechanizm `@shop/remote-sync` (`ctx.loader.create/update/remove` sterowane
-zdalnym manifestem) zostal empirycznie zweryfikowany lokalnie z mockiem
-API Cloudflare (`deploy/scripts/mock-registry-server.mjs`) - patrz
-`README.md#status-weryfikacji` po dokladny zakres tego, co jest sprawdzone
-end-to-end, a co (Worker na prawdziwym koncie Cloudflare) pozostaje do
-weryfikacji przed produkcyjnym uzyciem.
+Kompromis: utracono zdolnosc do aktualizacji POJEDYNCZEGO modulu bez
+rebuildu calego obrazu (kazda zmiana buduje wszystkie trzy aplikacje na
+nowo). W zamian za to nie ma juz drugiego, rownoleglego kanalu wprowadzania
+kodu do procesu produkcyjnego omijajacego standardowy pipeline CI/CD.
 
 ## 9. Graceful shutdown
 

@@ -91,9 +91,6 @@ importers:
       '@shop/product-service':
         specifier: workspace:*
         version: link:../packages/product-service
-      '@shop/remote-sync':
-        specifier: workspace:*
-        version: link:../packages/remote-sync
       '@shop/router-service':
         specifier: workspace:*
         version: link:../packages/router-service
@@ -142,12 +139,6 @@ importers:
       '@shop/shared':
         specifier: workspace:*
         version: link:../shared
-      cordis:
-        specifier: ^4.0.0-rc.8
-        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
-
-  packages/remote-sync:
-    dependencies:
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)

@@ -17,7 +17,6 @@
     "@shop/cart-service": "workspace:*",
     "@shop/nuxt-wrapper": "workspace:*",
     "@shop/product-service": "workspace:*",
-    "@shop/remote-sync": "workspace:*",
     "@shop/router-service": "workspace:*",
     "cordis": "^4.0.0-rc.8"
   }

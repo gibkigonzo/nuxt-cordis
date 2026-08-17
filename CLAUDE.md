@@ -78,10 +78,22 @@ Test Dockera: `docker build -f deploy/docker/Dockerfile -t shop .`
 
 ## Status i ograniczenia
 
-Patrz `README.md#status-weryfikacji`. W skrocie: lokalny dev, Docker i
-mechanizm `@shop/remote-sync` (lokalnie, z mockiem) sa faktycznie
-uruchomione i sprawdzone. Cloudflare Worker (`deploy/cloudflare/manifest-worker`)
-NIE zostal wdrozony na prawdziwym koncie (brak danych uwierzytelniajacych w
-tej sesji) - zweryfikuj przed produkcyjnym uzyciem. Czwarty modul
-(`apps/checkout`) jest tylko zaplanowany (`deploy/checkout-module-plan.md`),
-celowo niezaimplementowany.
+Patrz `README.md#status-weryfikacji`. W skrocie: lokalny dev i Docker sa
+faktycznie uruchomione i sprawdzone. Manifesty Kubernetes (`deploy/k8s/`) i
+pipeline CI (`deploy/workflows/build-and-push.yml`) sa napisane, ale NIE
+uruchomione end-to-end na prawdziwym klastrze/rejestrze w tej sesji (brak
+danych uwierzytelniajacych) - zweryfikuj przed produkcyjnym uzyciem, patrz
+`deploy/README.md#kubernetes`. Czwarty modul (`apps/checkout`) jest tylko
+zaplanowany (`deploy/checkout-module-plan.md`), celowo niezaimplementowany.
+
+**WAZNE:** wczesniejszy mechanizm `@shop/remote-sync` + Cloudflare R2/KV
+(dynamiczne pobieranie i rozpakowywanie `.tar.gz` z kodem modulow w
+dzialajacym procesie, bez weryfikacji integralnosci/sandboxa/autoryzacji)
+zostal **celowo usuniety** ze wzgledow bezpieczenstwa - patrz
+`ARCHITECTURE.md#8`. NIE przywracaj tego wzorca (dynamiczny `import()` z
+URL-a obliczanego w runtime, `fetch()` + rozpakowanie archiwum na dysk
+procesu produkcyjnego) bez wyraznej prosby uzytkownika i swiadomosci tych
+kompromisow. Aktualny model: kod trafia do procesu WYLACZNIE przez build
+obrazu (`deploy/docker/Dockerfile`) + deployment k8s (`deploy/k8s/`); cordis
+pozostaje orchestratorem kodu juz zapieczonego w obrazie, nie dystrybutorem
+kodu przez siec.

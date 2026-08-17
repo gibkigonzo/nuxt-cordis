@@ -1,0 +1,82 @@
+# Docelowo: .github/workflows/build-and-push.yml (patrz deploy/README.md po
+# instrukcje przeniesienia). Trzymany w deploy/workflows/ zamiast
+# .github/workflows/ jako REFERENCYJNY szablon do przejrzenia/dostosowania
+# przed pierwszym uzyciem, a nie od razu aktywny pipeline (ta sama konwencja
+# co poprzedni, usuniety `deploy-module.yml`).
+#
+# Zastepuje poprzedni model (per-modul .tar.gz publikowany na Cloudflare R2 i
+# pobierany w runtime przez usuniety `@shop/remote-sync` - patrz
+# ARCHITECTURE.md#8 po uzasadnienie tej zmiany). Teraz: CAlY system buduje
+# sie w JEDEN niezmienny obraz OCI (deploy/docker/Dockerfile), tagowany git
+# sha, publikowany do rejestru, a wdrozenie to zwykly rolling update k8s
+# (deploy/k8s/) - zero kodu pobieranego/rozpakowywanego przez dzialajacy
+# proces.
+
+name: Build and deploy image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'orchestrator/**'
+      - 'cordis.yml'
+      - 'deploy/docker/**'
+      - 'deploy/k8s/**'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Zaloguj do GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Zbuduj i wypchnij obraz (tag = git sha, niezmienny)
+        id: build
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/nuxt-cordis-shop"
+          docker build -f deploy/docker/Dockerfile -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          echo "image=$IMAGE:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    # Aktywne WYLACZNIE gdy repo ma ustawiona zmienna vars.KUBE_DEPLOY_ENABLED
+    # oraz sekret KUBE_CONFIG (kubeconfig zakodowany base64, z dostepem
+    # ograniczonym do namespace `shop`) - patrz deploy/README.md#kubernetes.
+    # Bez tego job jest pomijany, a obraz z build-and-push i tak jest
+    # gotowy do recznego wdrozenia: `kubectl apply -k deploy/k8s`.
+    if: ${{ vars.KUBE_DEPLOY_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skonfiguruj dostep do klastra
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > "$HOME/.kube/config"
+
+      - uses: imranismail/setup-kustomize@v2
+
+      - name: Ustaw tag obrazu i zastosuj manifesty (rolling update)
+        run: |
+          cd deploy/k8s
+          kustomize edit set image "ghcr.io/${{ github.repository_owner }}/nuxt-cordis-shop=${{ needs.build-and-push.outputs.image }}"
+          kubectl apply -k .
+          kubectl rollout status deployment/shop -n shop --timeout=180s

@@ -49,12 +49,14 @@ wrapper + reaktywne koefekty, zero kodu specyficznego dla "instancji nr 4").
     route: /checkout
 ```
 
-## 4. Sekwencja demonstracji (zgodna z deploy.md)
+## 4. Sekwencja demonstracji (lokalnie, `cordis.yml` na dysku)
 
 1. `pnpm --filter checkout run build` — buduje TYLKO ten modul (Nitro `node-listener`
    preset -> `.output/server/index.mjs`), reszta appek pozostaje niedotknieta.
-2. Dopisanie powyzszego wpisu do `cordis.yml` (lub, w wersji "produkcyjnej" z
-   deploy.md, do configu odczytywanego z Cloudflare KV/R2 — patrz `deploy/README.md`).
+2. Dopisanie powyzszego wpisu do `cordis.yml`. (W deploymencie produkcyjnym
+   k8s ten sam wpis trafia do obrazu przez normalny rebuild + rolling update -
+   patrz `deploy/README.md#kubernetes` - `cordis.yml` NIE jest odczytywane ze
+   zdalnego zrodla w runtime.)
 3. `@cordisjs/plugin-include` + `@cordisjs/plugin-loader` wykrywaja zmiane pliku
    configu (`loader/config-update`), widza nowy `id: checkout` ktorego nie ma w
    pamieci -> `EntryGroup.create()` -> `ctx.registry.plugin()` -> nowy fiber.
