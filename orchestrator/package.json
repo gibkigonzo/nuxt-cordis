@@ -13,11 +13,10 @@
     "@cordisjs/plugin-include": "^1.0.4",
     "@cordisjs/plugin-logger-console": "^1.0.0",
     "@cordisjs/plugin-loader": "^1.0.0-rc.5",
-    "@shop/broker": "workspace:*",
     "@shop/cart-service": "workspace:*",
+    "@shop/feature-registry-service": "workspace:*",
     "@shop/nuxt-wrapper": "workspace:*",
     "@shop/product-service": "workspace:*",
-    "@shop/router-service": "workspace:*",
     "cordis": "^4.0.0-rc.8"
   }
 }

@@ -1,0 +1,24 @@
+{
+  "name": "shop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "apps/shop - JEDNA aplikacja Nuxt skladajaca modules/home, modules/product, modules/cart (Nuxt Modules, build-time). Jedyna instancja Cordis wstrzykujaca koefekty cart+product+features.",
+  "type": "module",
+  "scripts": {
+    "dev": "nuxi dev",
+    "build": "nuxi build",
+    "typecheck": "nuxi typecheck"
+  },
+  "dependencies": {
+    "@shop/module-cart": "workspace:*",
+    "@shop/module-home": "workspace:*",
+    "@shop/module-product": "workspace:*",
+    "@shop/shared": "workspace:*",
+    "nuxt": "^4.5.2",
+    "vue": "^3.5.41",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "cordis": "^4.0.0-rc.8"
+  }
+}

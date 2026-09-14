@@ -7,7 +7,7 @@ import type { Context } from 'cordis'
 import { setBridge, deleteBridge, toBridgedSpecifier } from '@shop/shared/bridge'
 
 export interface NuxtWrapperConfig {
-  /** identyfikator instancji (stabilny, uzywany do bridge/routera/logow) */
+  /** identyfikator instancji (stabilny, uzywany do bridge/logow) */
   id: string
   /** sciezka do katalogu aplikacji Nuxt (zawierajacego .output/server/*) */
   dir: string
@@ -19,14 +19,12 @@ export interface NuxtWrapperConfig {
   host?: string
   /** koefekty wymagane przed aktywacja (np. ['cart']) */
   inject?: string[]
-  /** prefiks sciezki rejestrowany w RouterService (np. '/product') */
-  route?: string
   /**
    * Tryb deweloperski: obserwuj zbudowany plik i podmien instancje "make-before-break"
    * po kazdej zmianie (nowy serwer na porcie efemerycznym obok jeszcze dzialajacego
-   * starego, przelaczenie routera, dopiero potem zamkniecie starego) - np. rownolegle
-   * z `nuxi build --watch` danej aplikacji. Zero przestoju TEGO modulu podczas wlasnego
-   * przeladowania, nie tylko brak wplywu na pozostale (patrz ARCHITECTURE.md).
+   * starego, dopiero potem zamkniecie starego) - np. rownolegle z `nuxi build --watch`
+   * danej aplikacji. Zero przestoju TEGO modulu podczas wlasnego przeladowania
+   * (patrz ARCHITECTURE.md).
    */
   watch?: boolean
 }
@@ -54,10 +52,10 @@ interface ActiveInstance {
  * (Theorem 63 w pracy o Cordis: instancja startuje dopiero gdy jej zaleznosci sa dostepne).
  *
  * Podmiana instancji (config.watch) jest "make-before-break", nie dispose-then-create:
- * nowy serwer wstaje na porcie efemerycznym OBOK jeszcze dzialajacego starego, router
- * jest przelaczany dopiero gdy nowy faktycznie nasluchuje, a stary jest zamykany
- * DOPIERO POTEM - `server.close()` odsacza trwajace polaczenia zamiast je zrywac, wiec
- * zaden request w locie nie jest gubiony (Section 6.2 papieru Cordis: nowy provider
+ * nowy serwer wstaje na porcie efemerycznym OBOK jeszcze dzialajacego starego i
+ * zaczyna przyjmowac polaczenia, a stary jest zamykany DOPIERO POTEM -
+ * `server.close()` odsacza trwajace polaczenia zamiast je zrywac, wiec zaden
+ * request w locie nie jest gubiony (Section 6.2 papieru Cordis: nowy provider
  * ACTIVE -> przelaczenie ruchu -> dispose starego).
  */
 export function apply(ctx: Context, config: NuxtWrapperConfig): void {
@@ -81,13 +79,12 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
     setBridge(config.id, ctx2)
 
     let active: ActiveInstance | undefined
-    let unregisterRoute: (() => void) | undefined
     // `disposed` odcina KAZDA aktywacje w toku (nawet zakolejkowana, patrz
     // activationChain nizej) w momencie, gdy fiber jest dysponowany - bez tego
-    // aktywacja zakonczona PO teardownie odtworzylaby serwer/wpis w routerze,
-    // ktorych juz nic pozniej by nie posprzatalo (bridge dla `config.id` jest
-    // wtedy juz usuniety, wiec taka "ozywiona" instancja i tak nie moglaby
-    // obslugiwac requestow).
+    // aktywacja zakonczona PO teardownie odtworzylaby serwer, ktorego juz nic
+    // pozniej by nie posprzatalo (bridge dla `config.id` jest wtedy juz
+    // usuniety, wiec taka "ozywiona" instancja i tak nie moglaby obslugiwac
+    // requestow).
     let disposed = false
     // Serializuje wszystkie wywolania activate() (poczatkowy boot ORAZ kazde
     // kolejne wywolanie z watchera) - bez tego dwa rownolegle activate() (np.
@@ -96,22 +93,13 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
     // wpadaja w wyscig o ten sam port (EADDRINUSE dla przegranego).
     let activationChain: Promise<void> = Promise.resolve()
 
-    const registerRoute = (port: number) => {
-      if (!config.route || !inject.includes('router')) return
-      const router = ctx2.get('router')
-      // Router.register() z tym samym `id` co poprzednio NADPISUJE wpis (patrz
-      // services/router-service) - stary, nigdy-niewywolany disposer jest bezpiecznie
-      // martwy, bo jego wewnetrzny check referencji nie trafi juz w nowy wpis.
-      unregisterRoute = router?.register(config.route as string, { host, port, id: config.id })
-    }
-
     /**
      * Buduje i uruchamia NOWA instancje na porcie efemerycznym (OS przydziela wolny
      * port przy pierwszym boocie uzywamy `config.port`, przy kazdej kolejnej podmianie
      * `0` - zeby nowa instancja mogla wystartowac OBOK jeszcze dzialajacej starej).
-     * Dopiero gdy nowa faktycznie nasluchuje, router jest przelaczany na nia - i
-     * DOPIERO POTEM zamykana jest stara. Wolane WYLACZNIE przez `activate()` ponizej,
-     * ktore serializuje wywolania - nigdy bezposrednio.
+     * Dopiero gdy nowa faktycznie nasluchuje, stara jest zamykana - DOPIERO POTEM.
+     * Wolane WYLACZNIE przez `activate()` ponizej, ktore serializuje wywolania -
+     * nigdy bezposrednio.
      */
     const doActivate = async (): Promise<void> => {
       if (disposed) return
@@ -156,7 +144,7 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
       })
       if (disposed) {
         // Fiber zostal dysponowany, gdy serwer juz nasluchiwal - zamknij go od razu,
-        // NIE dotykaj `active`/routera (te sa juz posprzatane przez teardown).
+        // NIE dotykaj `active` (juz posprzatane przez teardown).
         await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()))
         return
       }
@@ -171,21 +159,11 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
           ? `[${config.id}] nowa instancja nasluchuje na http://${host}:${port}, przelaczam ruch...`
           : `[${config.id}] nasluchuje na http://${host}:${port} (${dir})`,
       )
-      try {
-        // Od tej chwili NOWY ruch trafia do nowej instancji (Map.set jest atomowe w
-        // jednowatkowym event loopie Node - brak okna z niespojnym stanem).
-        registerRoute(port)
-      } finally {
-        // W `finally`, zeby stara instancja zostala zamknieta NAWET jesli
-        // registerRoute() rzuci (np. router.register() na zajetym przez inny `id`
-        // prefiksie) - inaczej `previous` zostaje otwarty na zawsze, bez zadnej
-        // referencji, ktora mogla by go pozniej zamknac.
-        if (previous) {
-          // server.close() przestaje przyjmowac NOWE polaczenia, ale odsacza (drain)
-          // te juz trwajace - zaden request w locie do starej instancji nie jest zrywany.
-          await new Promise<void>((resolvePromise) => previous.server.close(() => resolvePromise()))
-          ctx2.logger.info(`[${config.id}] stara instancja (${previous.port}) zamknieta - podmiana zakonczona`)
-        }
+      if (previous) {
+        // server.close() przestaje przyjmowac NOWE polaczenia, ale odsacza (drain)
+        // te juz trwajace - zaden request w locie do starej instancji nie jest zrywany.
+        await new Promise<void>((resolvePromise) => previous.server.close(() => resolvePromise()))
+        ctx2.logger.info(`[${config.id}] stara instancja (${previous.port}) zamknieta - podmiana zakonczona`)
       }
     }
 
@@ -204,10 +182,9 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
         disposed = true
         // Czekaj, az kazda aktywacja w toku/zakolejkowana faktycznie sie zakonczy
         // (normalnie, lub przez wczesne wyjscie z powodu `disposed` powyzej) -
-        // inaczej mogla by dokonczyc sie PO tym teardownie i odtworzyc serwer/
-        // wpis w routerze, ktorych juz nic by nie posprzatalo.
+        // inaczej mogla by dokonczyc sie PO tym teardownie i odtworzyc serwer,
+        // ktorego juz nic by nie posprzatalo.
         await activationChain.catch(() => {})
-        unregisterRoute?.()
         deleteBridge(config.id)
         if (active) {
           await new Promise<void>((resolvePromise) => active!.server.close(() => resolvePromise()))
@@ -237,7 +214,7 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
         // aktywacja poprawnie failowala bezpiecznie (stara instancja dzialala dalej),
         // ale kolejne, docelowe zdarzenie (finalny zapis index.mjs) nigdy juz nie
         // przychodzilo - modul zostawal utkniety na starym kodzie bez zadnego bledu.
-        // `dir` (katalog aplikacji, np. apps/product) sam nigdy nie jest kasowany,
+        // `dir` (katalog aplikacji, np. apps/shop) sam nigdy nie jest kasowany,
         // wiec chokidar prawidlowo widzi `.output` znikajace i pojawiajace sie na
         // nowo w jego wnetrzu. `depth` jest ograniczony do liczby segmentow
         // `entryRel`, zeby nie rekurowac bez potrzeby w glab (np. `.nuxt/**`).

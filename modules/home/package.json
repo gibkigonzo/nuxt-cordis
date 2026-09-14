@@ -1,0 +1,10 @@
+{
+  "name": "@shop/module-home",
+  "version": "0.1.0",
+  "description": "Nuxt Module: strona glowna sklepu. Rejestruje wylacznie stronie '/' w hostujacej appce apps/shop - build-time, zero wlasnego procesu/portu.",
+  "type": "module",
+  "main": "./src/module.ts",
+  "dependencies": {
+    "@nuxt/kit": "^4.5.2"
+  }
+}

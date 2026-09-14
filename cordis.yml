@@ -3,7 +3,16 @@
 # tworzy je wspolbieznie (Promise.all), a rzeczywista kolejnosc aktywacji wynika
 # WYLACZNIE z tego, kto co deklaruje przez `inject` (Theorem 63/73: koniowy stan
 # jest funkcja configu, nie harmonogramu). Ponizsza kolejnosc jest czysto
-# kosmetyczna (uslugi -> brama -> aplikacje).
+# kosmetyczna (uslugi -> jedna appka Nuxt).
+#
+# UWAGA (patrz ARCHITECTURE.md#10): od tej wersji istnieje JEDNA aplikacja Nuxt
+# (apps/shop), skladajaca strony/route'y z modules/home, modules/product,
+# modules/cart (Nuxt Modules, build-time) - nie trzy osobne fibery/porty jak
+# wczesniej. Broker (`@shop/broker`) i reaktywna tabela tras (`@shop/router-service`)
+# zostaly USUNIETE, bo Nuxt sam routuje wewnatrz jednej appki - nie ma juz czego
+# proxowac. Koefekty backendowe (`cart`, `product`) oraz nowy `features`
+# (rejestr wlaczonych/wylaczonych modulow, patrz services/feature-registry-service)
+# pozostaja niezaleznymi komponentami Cordis.
 
 # --- konsola/logi -----------------------------------------------------------
 - id: logger
@@ -11,8 +20,8 @@
 
 # --- HMR wlasnego kodu warstwy Cordis (packages/*, services/*) ---------------
 # UWAGA: to obserwuje ZRODLA komponentow (nuxt-wrapper w packages/, cart-service
-# w services/, ...), NIE zbudowane aplikacje Nuxt - te maja WLASNY watcher
-# wbudowany w @shop/nuxt-wrapper (config.watch), bo sa ladowane przez dynamiczny
+# w services/, ...), NIE zbudowana appke Nuxt - ta ma WLASNY watcher wbudowany
+# w @shop/nuxt-wrapper (config.watch), bo jest ladowana przez dynamiczny
 # import() z URL-em obliczanym w runtime, ktorego @cordisjs/plugin-hmr nie widzi
 # w statycznym grafie modulow.
 - id: hmr
@@ -23,53 +32,26 @@
     ignored: ['**/node_modules/**', '**/.output/**', '**/dist/**']
 
 # --- koefekty (wspoldzielone uslugi w pamieci procesu) -----------------------
-- id: router-service
-  name: '@shop/router-service'
-
 - id: product-service
   name: '@shop/product-service'
 
 - id: cart-service
   name: '@shop/cart-service'
 
-# --- brama HTTP (Service Broker, Section 6.2) --------------------------------
-# Sam jest komponentem Cordis - moze byc aktualizowany w locie tak samo jak
-# kazda inna czesc systemu.
-- id: broker
-  name: '@shop/broker'
+- id: feature-registry-service
+  name: '@shop/feature-registry-service'
+
+# --- jedyna aplikacja Nuxt (apps/shop, sklada modules/*) ---------------------
+- id: shop
+  name: '@shop/nuxt-wrapper'
   config:
-    host: 0.0.0.0
+    id: shop
+    dir: ./apps/shop
     port: 8080
+    inject: ['cart', 'product', 'features']
 
-# --- instancje Nuxt (kazda: osobny fiber, osobny proces budowania) ----------
-- id: home
-  name: '@shop/nuxt-wrapper'
-  config:
-    id: home
-    dir: ./apps/home
-    port: 3000
-    inject: ['router']
-    route: /
-
-- id: product
-  name: '@shop/nuxt-wrapper'
-  config:
-    id: product
-    dir: ./apps/product
-    port: 3001
-    inject: ['cart', 'product', 'router']
-    route: /product
-
-- id: cart
-  name: '@shop/nuxt-wrapper'
-  config:
-    id: cart
-    dir: ./apps/cart
-    port: 3002
-    inject: ['cart', 'router']
-    route: /cart
-
-# Czwarty modul (apps/checkout) celowo NIE jest tu jeszcze wpisany - patrz
-# deploy/checkout-module-plan.md. Jego dodanie polega WYLACZNIE na dopisaniu
-# analogicznego wpisu (id: checkout, dir: ./apps/checkout, port: 3003,
-# inject: ['cart', 'router'], route: /checkout) - bez restartu powyzszych.
+# Czwarty modul (modules/checkout) jest celowo NIE dopisany do apps/shop/nuxt.config.ts
+# jeszcze - patrz deploy/checkout-module-plan.md. Jego dodanie polega WYLACZNIE
+# na dopisaniu go do listy `modules` w apps/shop/nuxt.config.ts (build-time) -
+# bez zadnego wpisu tutaj i bez restartu tego wpisu (ten sam fiber `shop`
+# po prostu dostaje nowy build).

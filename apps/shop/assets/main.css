@@ -1,0 +1,25 @@
+/* Wspoldzielony reset/motyw dla wszystkich modulow (modules/home, modules/product,
+   modules/cart) - wczesniej byl duplikowany w kazdej z 3 osobnych aplikacji Nuxt,
+   teraz zyje raz, w JEDNEJ appce (apps/shop), bo wszystkie strony renderuja sie
+   w tym samym dokumencie. Klasy specyficzne dla jednej strony zostaja lokalne,
+   w <style scoped> komponentu danego modulu. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: radial-gradient(circle at top, #1b1230 0%, #0b0714 60%);
+  color: #f1ecff;
+  min-height: 100vh;
+}
+.shell { max-width: 960px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+.badge {
+  display: inline-block; font-size: .75rem; letter-spacing: .03em; text-transform: uppercase;
+  color: #b79dff; background: rgba(139, 92, 246, .12); border: 1px solid rgba(139, 92, 246, .35);
+  border-radius: 999px; padding: .3rem .8rem; margin-bottom: 1.25rem;
+}
+h1 { font-size: 2rem; margin: 0; }
+.top { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.ghost { color: #b79dff; text-decoration: none; font-size: .9rem; }
+.hint { color: #9c8fc4; font-size: .82rem; border-top: 1px solid rgba(255,255,255,.08); padding-top: 1.5rem; }
+.hint code { background: rgba(255,255,255,.08); padding: .1rem .35rem; border-radius: .3rem; }

@@ -1,12 +1,14 @@
 # syntax=docker/dockerfile:1
 #
 # Jedyny obraz systemu: jeden proces Node uruchamia orchestratora Cordis,
-# ktory laduje uslugi, brame i trzy (docelowo wiecej) instancje Nuxt jako
-# fibery w JEDNYM procesie. Obraz jest niezmiennym artefaktem calego systemu -
-# aktualizacja KAZDEGO modulu (w tym pojedynczej aplikacji Nuxt) idzie przez
-# rebuild tego obrazu i normalny rolling deployment (patrz deploy/k8s/ i
-# deploy/README.md), NIE przez zdalne pobieranie/rozpakowywanie kodu w
-# dzialajacym procesie.
+# ktory laduje uslugi backendowe (cart/product/features) i JEDNA instancje
+# Nuxt (apps/shop, skladajaca modules/home, modules/product, modules/cart -
+# Nuxt Modules, build-time, patrz ARCHITECTURE.md#10) jako fiber w tym samym
+# procesie. Obraz jest niezmiennym artefaktem calego systemu - aktualizacja
+# KAZDEGO modulu (w tym dodanie nowego, patrz deploy/checkout-module-plan.md)
+# idzie przez rebuild tego obrazu i normalny rolling deployment (patrz
+# deploy/k8s/ i deploy/README.md), NIE przez zdalne pobieranie/rozpakowywanie
+# kodu w dzialajacym procesie.
 
 FROM node:24-bookworm-slim AS base
 RUN corepack enable
@@ -18,19 +20,19 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY orchestrator/package.json orchestrator/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/nuxt-wrapper/package.json packages/nuxt-wrapper/package.json
-COPY packages/broker/package.json packages/broker/package.json
-COPY services/router-service/package.json services/router-service/package.json
 COPY services/cart-service/package.json services/cart-service/package.json
 COPY services/product-service/package.json services/product-service/package.json
-COPY apps/home/package.json apps/home/package.json
-COPY apps/product/package.json apps/product/package.json
-COPY apps/cart/package.json apps/cart/package.json
+COPY services/feature-registry-service/package.json services/feature-registry-service/package.json
+COPY modules/home/package.json modules/home/package.json
+COPY modules/product/package.json modules/product/package.json
+COPY modules/cart/package.json modules/cart/package.json
+COPY apps/shop/package.json apps/shop/package.json
 RUN pnpm install --frozen-lockfile
 
-# --- warstwa budowania (kompiluje wszystkie aplikacje Nuxt do .output/server) ---
+# --- warstwa budowania (kompiluje JEDNA aplikacje Nuxt do .output/server) ---
 FROM deps AS build
 COPY . .
-RUN pnpm --filter home --filter product --filter cart run build
+RUN pnpm --filter shop run build
 
 # --- warstwa uruchomieniowa: tylko to, co potrzebne do wystartowania orchestratora ---
 FROM base AS runtime
@@ -43,20 +45,18 @@ COPY --from=build /app/cordis.yml ./cordis.yml
 COPY --from=build /app/orchestrator ./orchestrator
 COPY --from=build /app/packages ./packages
 COPY --from=build /app/services ./services
-# Tylko zbudowane wyjscia aplikacji (.output) sa potrzebne w runtime - zrodla
-# Vue/nuxt.config.ts NIE sa potrzebne do uruchomienia, ale kopiujemy caly katalog
-# apps/ dla prostoty (kazda apka i tak zawiera tylko wlasny .output + node_modules
-# ktorych tu nie ma, bo pnpm trzyma je w korzeniu/.pnpm).
-COPY --from=build /app/apps/home/.output ./apps/home/.output
-COPY --from=build /app/apps/home/nuxt.config.ts ./apps/home/nuxt.config.ts
-COPY --from=build /app/apps/product/.output ./apps/product/.output
-COPY --from=build /app/apps/product/nuxt.config.ts ./apps/product/nuxt.config.ts
-COPY --from=build /app/apps/cart/.output ./apps/cart/.output
-COPY --from=build /app/apps/cart/nuxt.config.ts ./apps/cart/nuxt.config.ts
+# UWAGA: modules/* (Nuxt Modules) sa zaleznoscia WYLACZNIE builda apps/shop -
+# Rollup/Nitro bundluje ich kod bezposrednio do .output/server, wiec runtime
+# NIE potrzebuje ich zrodel (w przeciwienstwie do packages/services, ktore
+# orchestrator importuje bezposrednio jako wlasne komponenty Cordis).
+# Tylko zbudowane wyjscie (.output) jest potrzebne w runtime - zrodla
+# Vue/nuxt.config.ts NIE sa potrzebne do uruchomienia, ale kopiujemy caly
+# katalog apps/shop dla prostoty.
+COPY --from=build /app/apps/shop/.output ./apps/shop/.output
+COPY --from=build /app/apps/shop/nuxt.config.ts ./apps/shop/nuxt.config.ts
 
-# Jedyny publicznie wystawiony port to brama (Service Broker) - porty
-# poszczegolnych instancji Nuxt (3000-3002) nasluchuja domyslnie na 127.0.0.1
-# i sa dostepne wylacznie wewnatrz procesu/kontenera (patrz packages/nuxt-wrapper).
+# Jedyny publicznie wystawiony port to sama appka (jeden proces, jeden port) -
+# Nuxt sam routuje wewnatrz siebie (patrz packages/nuxt-wrapper).
 EXPOSE 8080
 
 # Brak zapisu na dysku w runtime (caly kod jest juz w obrazie, zero pobierania

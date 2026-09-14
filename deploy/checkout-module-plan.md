@@ -1,9 +1,19 @@
-# Plan: czwarty modul (`apps/checkout`)
+# Plan: czwarty modul (`modules/checkout`)
 
-Ten dokument opisuje **plan**, nie implementacje. Modul `checkout` celowo NIE jest
-jeszcze zbudowany — jego dodanie do juz dzialajacego orchestratora ma posluzyc jako
-zywa demonstracja przepiywu opisanego w `deploy.md`: nowy modul "dorasta" wewnatrz
-zyjacego procesu, bez restartu `home`/`product`/`cart`.
+Ten dokument opisuje **plan**, nie implementacje. Modul `checkout` celowo NIE
+jest jeszcze zbudowany. Od wersji z JEDNA appka Nuxt (`apps/shop`, patrz
+`ARCHITECTURE.md#10`) jego dodanie ma posluzyc jako zywa demonstracja DWOCH
+odrebnych mechanizmow, nie jednego:
+
+1. **Build-time**: nowy modul Nuxta wchodzi do `apps/shop` przez normalny
+   rebuild + rolling update - dokladnie tak samo jak kazda inna zmiana kodu.
+2. **Runtime, bez rebuildu**: modul moze zostac WGRANY, ale WYLACZONY (przez
+   `services/feature-registry-service`), a nastepnie WLACZONY pozniej -
+   `PATCH` stanu w pamieci procesu, zero nowego builda/deploymentu. To jest
+   dokladny odpowiednik "dodania funkcjonalnosci w trakcie zycia frontendu"
+   bez ladowania niezweryfikowanego kodu (patrz `ARCHITECTURE.md#8` po
+   uzasadnienie, dlaczego druga sciezka - zdalne pobieranie kodu w runtime -
+   zostala celowo usunieta).
 
 ## 1. Zakres funkcjonalny
 
@@ -18,68 +28,111 @@ Prosta strona podsumowania zamowienia:
 ## 2. Struktura plikow (docelowa)
 
 ```
-apps/checkout/
-├── package.json            # deps: nuxt, vue, vue-router, @shop/shared (dep), cordis (devDep)
-├── nuxt.config.ts          # srcDir: '.', app.baseURL: '/checkout/', devServer.port: 3003,
-│                            # nitro.preset: 'node-listener' (identycznie jak pozostale 3 appki)
-├── app.vue                 # <NuxtPage />
-├── pages/index.vue         # widok podsumowania + potwierdzenia
-└── server/
-    ├── utils/cart-id.ts    # ten sam wzorzec cookie 'cart_id' co w apps/product, apps/cart
-    └── api/
-        ├── summary.get.ts   # ctx.get('cart').snapshot(cartId)
-        └── confirm.post.ts  # ctx.get('cart').clear(cartId) + zwrocenie potwierdzenia
+modules/checkout/
+├── package.json              # deps: @nuxt/kit, @shop/shared (workspace)
+├── tsconfig.json
+└── src/
+    ├── module.ts              # defineNuxtModule - patrz modules/cart/src/module.ts
+    └── runtime/
+        ├── pages/index.vue    # widok podsumowania + potwierdzenia
+        └── server/api/
+            ├── summary.get.ts    # ctx.get('cart').snapshot(cartId)
+            └── confirm.post.ts   # ctx.get('cart').clear(cartId) + zwrocenie potwierdzenia
 ```
 
 Zero nowego kodu po stronie Cordis (`@shop/nuxt-wrapper`, `@shop/cart-service`,
-`@shop/router-service`, `@shop/broker`) — czwarty modul korzysta z DOKLADNIE tych
-samych, juz istniejacych komponentow, co jest calym sensem demonstracji (generyczny
-wrapper + reaktywne koefekty, zero kodu specyficznego dla "instancji nr 4").
+`@shop/feature-registry-service`) - czwarty modul korzysta z DOKLADNIE tych
+samych, juz istniejacych komponentow, co jest calym sensem demonstracji:
+generyczny wrapper (jedna appka, jeden fiber) + reaktywny rejestr feature'ow,
+zero kodu specyficznego dla "modulu nr 4".
 
-## 3. Wpis w `cordis.yml` (dodawany, nie modyfikujacy istniejacych)
+## 3. Rejestracja w `apps/shop`
 
-```yaml
-- id: checkout
-  name: '@shop/nuxt-wrapper'
-  config:
-    id: checkout
-    dir: ./apps/checkout
-    port: 3003
-    inject: ['cart', 'router']
-    route: /checkout
+`modules/checkout/src/module.ts` wyglada analogicznie do `modules/cart/src/module.ts`
+(patrz ten plik po pelny wzorzec), z jedna roznica - startuje WYLACZONY:
+
+```ts
+const shopFeatures = ((nuxt.options.runtimeConfig.shopFeatures ??= []) as unknown[])
+shopFeatures.push({ id: 'checkout', routes: ['/checkout'], enabled: false })
 ```
 
-## 4. Sekwencja demonstracji (lokalnie, `cordis.yml` na dysku)
+Wpis w `apps/shop/nuxt.config.ts` (dodawany, nie modyfikujacy istniejacych):
 
-1. `pnpm --filter checkout run build` — buduje TYLKO ten modul (Nitro `node-listener`
-   preset -> `.output/server/index.mjs`), reszta appek pozostaje niedotknieta.
-2. Dopisanie powyzszego wpisu do `cordis.yml`. (W deploymencie produkcyjnym
-   k8s ten sam wpis trafia do obrazu przez normalny rebuild + rolling update -
-   patrz `deploy/README.md#kubernetes` - `cordis.yml` NIE jest odczytywane ze
-   zdalnego zrodla w runtime.)
-3. `@cordisjs/plugin-include` + `@cordisjs/plugin-loader` wykrywaja zmiane pliku
-   configu (`loader/config-update`), widza nowy `id: checkout` ktorego nie ma w
-   pamieci -> `EntryGroup.create()` -> `ctx.registry.plugin()` -> nowy fiber.
-4. Fiber `checkout` przechodzi `Inactive -> Reloading` i CZEKA (Theorem 63), bo
-   deklaruje `inject: ['cart', 'router']` — obie sa juz aktywne (dostarczane przez
-   `apps/cart`-niezalezny `@shop/cart-service` i `@shop/broker`), wiec aktywuje sie
-   NATYCHMIAST, bez oczekiwania na restart czegokolwiek.
-5. `@shop/nuxt-wrapper` importuje `.output/server/index.mjs`, otwiera `http.Server`
-   na porcie 3003, rejestruje trase `/checkout` w `RouterService`.
-6. Broker (juz dzialajacy, obslugujacy ruch do `/`, `/product`, `/cart`) od tej
-   chwili poprawnie routuje `/checkout/*` — bez wlasnego restartu, bo `RouterService`
-   jest reaktywnym koefektem, ktory broker odczytuje przy kazdym requescie.
-7. Sesje uzytkownikow aktualnie przegladajacych `/product` lub `/cart` NIE sa w
-   ogole przerywane (Corollary 62: fiber innych instancji sa nietkniete).
+```ts
+modules: [
+  '@shop/module-home',
+  '@shop/module-product',
+  '@shop/module-cart',
+  '@shop/module-checkout',   // <- nowy wpis
+],
+```
+
+I `"@shop/module-checkout": "workspace:*"` w `apps/shop/package.json`.
+
+## 4. Sekwencja demonstracji
+
+### Faza A - build-time (normalny deployment)
+
+1. `pnpm --filter shop run build` - buduje CALA appke NA NOWO (to jest znany,
+   uczciwie przyznany kompromis modelu z jedna appka - patrz `ARCHITECTURE.md#10`
+   i punkt "Kompromis" nizej), teraz zawierajaca skompilowany, ale wylaczony
+   modul `checkout`.
+2. Normalny `git push` -> CI buduje nowy obraz -> rolling update (patrz
+   `deploy/README.md#kubernetes`) - zero pobierania/rozpakowywania kodu przez
+   siec w dzialajacym procesie.
+3. `/checkout` odpowiada `404` (modul jest w buildzie, ale `enabled: false`
+   w `services/feature-registry-service`) - sesje uzytkownikow na `/product`
+   czy `/cart` nie widza zadnej zmiany.
+
+### Faza B - runtime, bez rebuildu
+
+4. Operator wywoluje `ctx.get('features').enable('checkout')` (np. z wlasnego,
+   zabezpieczonego panelu admina - celowo NIE zaimplementowanego tutaj, zeby
+   nie dodawac publicznego, niezabezpieczonego API do wlaczania funkcji -
+   patrz "Czego to demo NIE dodaje" nizej).
+5. Kolejny request do `/checkout` trafia juz do dzialajacego, zbudowanego
+   kodu - `services/feature-registry-service` to zwykly, reaktywny stan w
+   pamieci procesu (Map), wiec przelaczenie jest natychmiastowe.
+6. Sesje uzytkownikow aktualnie przegladajacych `/product` lub `/cart` NIE sa
+   w ogole przerywane - `feature-gate` middleware sprawdza WYLACZNIE prefiks
+   sciezki, ktory sie zmienia (`/checkout`), zaden inny stan nie jest ruszany.
 
 ## 5. Weryfikacja "bez przestoju"
 
-Proponowany test manualny/skryptowany (do dodania jako `deploy/scripts/smoke-checkout.sh`
-gdy modul powstanie): w petli co 200ms odpytywac `GET /product` podczas wykonywania
-kroku 2-6 powyzej i potwierdzic zerowa liczbe bledow/timeoutow w trakcie dodawania
-czwartego modulu.
+Zweryfikowane empirycznie w tej sesji dla mechanizmu `enable`/`disable` na
+module `cart` (jako dowod, ze mechanizm dziala - `checkout` bedzie
+identyczny): `disable('cart')` -> `/cart` natychmiast `404`, `/product` i `/`
+nadal `200`, ZADEN rebuild ani restart procesu. `enable('checkout')` dziala
+lustrzanie odwrotnie.
 
-## 6. Kiedy realizowac
+Proponowany test manualny/skryptowany po zaimplementowaniu modulu (do dodania
+jako `deploy/scripts/smoke-checkout.sh`): w petli co 200ms odpytywac
+`GET /product` podczas wywolywania `enable('checkout')` i potwierdzic zerowa
+liczbe bledow/timeoutow.
+
+## 6. Kompromis: dlaczego to NIE jest to samo, co dawny `deploy.md`
+
+Wczesniejszy (usuniety, patrz `ARCHITECTURE.md#8`) plan zakladal aktualizacje
+POJEDYNCZEGO modulu bez rebuildu CALEGO systemu, przez pobieranie nowego kodu
+z sieci. Model z jedna appka Nuxt (`apps/shop`) idzie w INNA strone: dodanie
+NOWEGO kodu zawsze wymaga rebuildu calej appki (Faza A powyzej) - to jest
+swiadomie przyjety kompromis modelu Nuxt Modules (patrz ARCHITECTURE.md#10,
+"Kiedy Cordis naprawde uzyc"). To, co dziala BEZ rebuildu, to WYLACZNIE
+przelaczanie widocznosci kodu, ktory JUZ przeszedl build+review+CI (Faza B) -
+nigdy wprowadzanie nowego, niezweryfikowanego kodu do dzialajacego procesu.
+
+## 7. Czego to demo NIE dodaje (celowo)
+
+- Publicznego/niezabezpieczonego endpointu HTTP do wywolywania `enable()`/`disable()`
+  - w tej sesji zweryfikowano mechanizm przez sygnal procesu (`kill -USR2`,
+    tylko do testow lokalnych, NIE czesc zadnego commitowanego kodu) - realny
+    panel admina wymagalby wlasnej autoryzacji, celowo poza zakresem tego demo.
+- Trwalosci stanu `enabled`/`disabled` (restart procesu przywraca domyslny
+  stan z manifestu builda) - gdyby byla potrzebna, `FeatureRegistryService`
+  jest jedynym miejscem, gdzie trzeba by dodac odczyt/zapis do zewnetrznego
+  magazynu (identycznie jak uwaga o trwalosci w `services/cart-service`).
+
+## 8. Kiedy realizowac
 
 Ten plan zostanie zrealizowany jako osobny, nastepny krok (na wyrazne polecenie),
 PO uruchomieniu i zweryfikowaniu dzialania podstawowych trzech modulow
