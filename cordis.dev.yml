@@ -36,11 +36,14 @@
   name: '@shop/feature-registry-service'
 
 # --- jedyna aplikacja Nuxt (apps/shop, sklada modules/*) ---------------------
+# `host: 0.0.0.0` - patrz uzasadnienie w cordis.yml (broker usuniety, shop
+# jest teraz jedynym publicznie eksponowanym portem).
 - id: shop
   name: '@shop/nuxt-wrapper'
   config:
     id: shop
     dir: ./apps/shop
+    host: 0.0.0.0
     port: 8080
     inject: ['cart', 'product', 'features']
     watch: true

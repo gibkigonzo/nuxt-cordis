@@ -52,8 +52,18 @@ zero kodu specyficznego dla "modulu nr 4".
 (patrz ten plik po pelny wzorzec), z jedna roznica - startuje WYLACZONY:
 
 ```ts
-const shopFeatures = ((nuxt.options.runtimeConfig.shopFeatures ??= []) as unknown[])
-shopFeatures.push({ id: 'checkout', routes: ['/checkout'], enabled: false })
+import { registerShopFeature } from '@shop/shared/feature-manifest'
+
+registerShopFeature(nuxt.options, {
+  id: 'checkout',
+  // WAZNE: strona ORAZ oba server routes ponizej (summary.get.ts,
+  // confirm.post.ts) - pominiecie ktoregokolwiek z nich oznaczaloby, ze
+  // disable('checkout') chowa strone, ale zostawia API w pelni dzialajace
+  // (dokladnie ten blad zgloszony i naprawiony w modules/cart i
+  // modules/product w tej sesji, patrz ARCHITECTURE.md#feature-registry).
+  routes: ['/checkout', '/api/summary', '/api/confirm'],
+  enabled: false,
+})
 ```
 
 Wpis w `apps/shop/nuxt.config.ts` (dodawany, nie modyfikujacy istniejacych):

@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./bridge": "./src/bridge.ts",
-    "./request-scope": "./src/request-scope.ts"
+    "./request-scope": "./src/request-scope.ts",
+    "./feature-manifest": "./src/feature-manifest.ts"
   },
   "dependencies": {
     "h3": "^1.15.11"

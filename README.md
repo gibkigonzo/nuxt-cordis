@@ -104,11 +104,16 @@ terminalu:
 pnpm --filter shop run build   # zmien kod (w apps/shop LUB w dowolnym modules/*), przebuduj
 ```
 
-Podmiana jest "make-before-break" (Section 6.2 papieru Cordis: Service
-Broker), NIE dispose-then-create: `@shop/nuxt-wrapper` uruchamia nowa
-instancje na porcie efemerycznym OBOK jeszcze dzialajacej starej, i DOPIERO
-POTEM zamyka stara (`server.close()` odsacza polaczenia w locie, nie zrywa
-ich) - appka sama siebie wymienia bez wlasnego przestoju. Stan uslug
+Podmiana jest zero-downtime, ale INACZEJ niz przed pivotem na jedna appke:
+`@shop/nuxt-wrapper` otwiera JEDEN, trwaly `http.Server` raz i nigdy go nie
+zamyka/otwiera ponownie - hot-reload podmienia WYLACZNIE wewnetrzna
+referencje do funkcji obslugujacej request (atomowa podmiana zmiennej w
+jednowatkowym JS). Zweryfikowane empirycznie w tej sesji: 200 requestow co
+50ms obejmujacych caly cykl rebuildu - `0/200` bledow, caly czas dokladnie
+jeden proces nasluchujacy na tym samym porcie (patrz ARCHITECTURE.md#5 po
+uzasadnienie, dlaczego wczesniejszy model "nowy serwer na porcie
+efemerycznym" - poprawny WYLACZNIE gdy broker przekierowywal ruch - po
+usunieciu brokera psul caly system po pierwszym reloadzie). Stan uslug
 backendowych (`CartService`, `ProductService`, `FeatureRegistryService` -
 osobne fibery) przetrwa w calosci niezaleznie od podmiany appki.
 
@@ -119,9 +124,13 @@ mechanizm: `services/feature-registry-service` (koefekt `features`) pamieta,
 ktore z juz-zbudowanych modulow sa aktualnie wlaczone. To pozwala wgrac nowy
 modul jako WYLACZONY (bezpieczny, zrewiewowany build), a potem wlaczyc go bez
 rebuildu i bez restartu - `ctx.get('features').enable('checkout')` z
-dowolnego miejsca majacego dostep do `ctx`. Zweryfikowane empirycznie w tej
-sesji: `disable('cart')` -> `GET /cart` natychmiast `404`, `GET /product` i
-`GET /` nadal `200`, zero rebuildu, zero restartu procesu. Pelny przyklad:
+dowolnego miejsca majacego dostep do `ctx`. Kazdy modul deklaruje w
+manifescie strone ORAZ kazdy wlasny server route - `disable(id)` gatuje
+WSZYSTKIE z nich, nie tylko strone. Zweryfikowane empirycznie w tej sesji:
+`disable('cart')` -> `GET /cart`, `GET /api/cart`, `POST /api/cart/remove`,
+`POST /api/cart/clear` wszystkie natychmiast `404`, `GET /product`,
+`POST /api/cart/add` i `GET /` nadal `200`, zero rebuildu, zero restartu
+procesu. Pelny przyklad:
 [`deploy/checkout-module-plan.md`](./deploy/checkout-module-plan.md).
 
 **To NIE jest to samo, co usuniety `@shop/remote-sync`** (patrz
@@ -156,15 +165,22 @@ tylko zaprojektowane na papierze):
 
 - [x] build + start JEDNEJ appki Nuxt (`apps/shop`), skladajacej strony z
       trzech Nuxt Modules, wspoldzielony stan koszyka miedzy nimi
-- [x] koefekt `features` (rejestr modulow): `disable('cart')` -> `GET /cart`
-      natychmiast `404` (`GET /product`/`GET /`nadal `200`), bez rebuildu i
-      bez restartu procesu - zweryfikowane przez sygnal procesu w sesji
-      deweloperskiej (nie czesc commitowanego kodu, patrz
-      `deploy/checkout-module-plan.md#7`)
-- [x] hot-reload calej appki "make-before-break", bez przestoju (dev-only
-      mechanizm - `cordis.dev.yml`, patrz sekcja wyzej)
+- [x] koefekt `features` (rejestr modulow): `disable('cart')` -> strona
+      ORAZ wszystkie jej server routes natychmiast `404` (inne moduly nadal
+      `200`), bez rebuildu i bez restartu procesu; `register()` rzuca przy
+      probie zarejestrowania przez dwa rozne moduly tej samej sciezki -
+      zweryfikowane przez sygnal procesu w sesji deweloperskiej (nie czesc
+      commitowanego kodu, patrz `deploy/checkout-module-plan.md#7`)
+- [x] hot-reload calej appki bez przestoju: 200 requestow co 50ms
+      obejmujacych caly cykl rebuildu, `0/200` bledow, caly czas jeden
+      proces na tym samym porcie (dev-only mechanizm - `cordis.dev.yml`,
+      patrz sekcja wyzej i ARCHITECTURE.md#5)
 - [x] graceful shutdown (SIGTERM) - kaskadowe zamkniecie w kolejnosci LIFO
 - [x] `docker build` + `docker run` + `docker stop` calego systemu
+- [x] `host: 0.0.0.0` w `cordis.yml` - proces nasluchuje na wszystkich
+      interfejsach (`*:8080`, zweryfikowane przez `lsof`), nie tylko na
+      loopback (patrz ARCHITECTURE.md#pivot-fixes - wczesniej brakujace,
+      lamalo kazdy deployment Docker/Kubernetes)
 - [ ] `deploy/k8s/` + `deploy/workflows/build-and-push.yml` - manifesty i pipeline
       napisane wedlug udokumentowanego, poprawnego API (`kubectl`/`kustomize`/GHCR),
       ale NIE uruchomione end-to-end na prawdziwym klastrze/rejestrze w tej sesji

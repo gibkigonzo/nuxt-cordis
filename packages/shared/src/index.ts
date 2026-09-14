@@ -36,15 +36,9 @@ export interface CartSnapshot {
   itemCount: number
 }
 
-export interface RouteTarget {
-  host: string
-  port: number
-  id: string
-}
-
 /** Klucze koefektow - jedno miejsce prawdy dla nazw uslug wspoldzielonych przez ctx. */
 export const COEFFECT_KEYS = {
   cart: 'cart',
   product: 'product',
-  router: 'router',
+  features: 'features',
 } as const

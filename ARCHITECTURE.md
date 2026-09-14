@@ -178,21 +178,32 @@ zamiast do jego LOKALIZACJI SIECIOWEJ.
   Nuxta (`nuxi build` w `apps/shop`), nie sa importowane bezposrednio przez
   zaden komponent Cordis.
 - **Wlasny watcher w `@shop/nuxt-wrapper`** (`config.watch: true`) obserwuje
-  zbudowany plik `apps/shop` i wola natywne `ctx.fiber.restart()`. Powod
-  odrebnego mechanizmu: appka jest ladowana przez **dynamiczny** `import()` z
-  URL-em obliczanym w runtime (patrz punkt 2) - `@cordisjs/plugin-hmr` sledzi
-  STATYCZNY graf modulow, wiec nigdy nie zobaczylby tego importu jako czesci
-  grafu zaleznosci komponentu. Ten watcher obserwuje CALY katalog `apps/shop`
-  (w tym efekty zmian w `modules/*` - Rollup/Nitro bundluje ich kod
-  bezposrednio do wynikowego `.output/server/index.mjs`, wiec zmiana w
-  `modules/cart/src/module.ts` po `pnpm --filter shop run build` tworzy nowy
-  build TEGO SAMEGO pliku, ktory ten watcher juz obserwuje).
+  zbudowany plik `apps/shop` i wola `activate()` bezposrednio (NIE
+  `ctx.fiber.restart()`). Powod odrebnego mechanizmu: appka jest ladowana
+  przez **dynamiczny** `import()` z URL-em obliczanym w runtime (patrz
+  punkt 2) - `@cordisjs/plugin-hmr` sledzi STATYCZNY graf modulow, wiec
+  nigdy nie zobaczylby tego importu jako czesci grafu zaleznosci komponentu.
+  Ten watcher obserwuje CALY katalog `apps/shop` (w tym efekty zmian w
+  `modules/*` - Rollup/Nitro bundluje ich kod bezposrednio do wynikowego
+  `.output/server/index.mjs`, wiec zmiana w `modules/cart/src/module.ts` po
+  `pnpm --filter shop run build` tworzy nowy build TEGO SAMEGO pliku, ktory
+  ten watcher juz obserwuje).
 
-Zweryfikowane (sprzed pivotu na jedna appke, mechanizm niezmieniony): rebuild
-w tle -> log `wykryto nowy build, uruchamiam nowa instancje obok starej` ->
-stary serwer zamkniety, nowy zbudowany kod zaimportowany i wystawiony na tym
-samym porcie, zero przerwanych requestow w locie (make-before-break, patrz
-`packages/nuxt-wrapper/src/index.ts`).
+**Mechanizm podmiany kodu (poprawiony w tej sesji - patrz Sekcja 11.1):**
+`@shop/nuxt-wrapper` otwiera JEDEN, trwaly `http.Server` RAZ, przy pierwszej
+udanej aktywacji fibera, i NIGDY go nie zamyka/nie otwiera ponownie na inny
+port do konca zycia fibera. Hot-reload podmienia WYLACZNIE wewnetrzna
+referencje `currentListener`, do ktorej ten trwaly serwer deleguje kazdy
+request - atomowa podmiana zmiennej w jednowatkowym JS, zero zamykania/
+otwierania socketow. Zweryfikowane empirycznie w tej sesji: 200 requestow co
+50ms do `/` obejmujacych caly cykl rebuildu (w tym przejsciowe okno, w ktorym
+Nitro kasuje `.output` przed odtworzeniem go od zera - watcher bezpiecznie
+loguje ostrzezenie i NIE dotyka `currentListener`, dopoki nowy build faktycznie
+nie istnieje) - `0/200` bledow, caly czas dokladnie JEDEN proces nasluchujacy
+na porcie 8080 (`lsof`/`ss` potwierdzaja brak jakiegokolwiek portu
+efemerycznego). Log przy udanym reloadzie: `nowy build zaladowany
+(hot-reload) - nadal nasluchuje na http://<host>:<port>` - ten sam host:port
+co przy pierwszym starcie.
 
 ## 6. TypeScript bez kroku budowania {#typescript}
 
@@ -499,13 +510,14 @@ na liscie antywzorcow analizy.
 | 3 wpisy `@shop/nuxt-wrapper` w `cordis.yml` | 1 wpis `@shop/nuxt-wrapper` w `cordis.yml` |
 
 **Co NIE sie zmienilo** (mechanizmy sprzed pivotu, ponownie uzyte bez modyfikacji):
-`@shop/nuxt-wrapper` (Sekcja 1, wciaz "jeden zbudowany plik JS", teraz
-uzywany raz zamiast trzy razy), `packages/shared/src/bridge.ts` (Sekcja 2,
-identyczny mechanizm), `services/cart-service`/`services/product-service`
-(Sekcja 3, wciaz niezalezne komponenty), make-before-break hot-reload (Sekcja
-5, wciaz `config.watch` w `@shop/nuxt-wrapper`), model deploymentu (Sekcja 8,
-juz byl "jeden obraz/jeden proces" - `deploy/docker/Dockerfile` potrzebowal
-tylko listy `COPY`, nie zmiany podejscia).
+import zbudowanego pliku przez bridge (Sekcja 1-2, `packages/shared/src/bridge.ts`,
+teraz uzywany raz zamiast trzy razy), `services/cart-service`/`services/product-service`
+(Sekcja 3, wciaz niezalezne komponenty), model deploymentu (Sekcja 8, juz byl
+"jeden obraz/jeden proces" - `deploy/docker/Dockerfile` potrzebowal tylko
+listy `COPY`, nie zmiany podejscia). **Hot-reload (`config.watch` w
+`@shop/nuxt-wrapper`) NIE zostal ponownie uzyty bez modyfikacji** - patrz
+11.1 nizej, bo jego mechanizm (ephemeral port + zewnetrzny router) zalezal
+od komponentu, ktory ten pivot wlasnie usunal.
 
 **Nowy mechanizm, ktorego wczesniej nie bylo:** `services/feature-registry-service`
 (koefekt `features`) - runtime-owe wlaczanie/wylaczanie JUZ ZBUDOWANEGO
@@ -515,3 +527,69 @@ skladac je w trakcie zycia frontendu?" - odpowiedz brzmi: TAK, ale WYLACZNIE
 dla kodu, ktory juz przeszedl build+review+CI (patrz rozroznienie w
 `deploy/checkout-module-plan.md#6`), nigdy dla nowego, niezweryfikowanego
 kodu pobieranego z sieci (to pozostaje zabronione, Sekcja 8).
+
+### 11.1 Naprawy po code review pivotu {#pivot-fixes}
+
+Pierwsza wersja pivotu (opisanego wyzej) zawierala kilka realnych bledow,
+wykryte przez systematyczny code review (10 rownoleglych "kątów" analizy)
+BEZPOSREDNIO PO pivocie, zanim trafily do produkcji. Zapisane tutaj, zeby
+przyszly kontrybutor rozumial, ze te mechanizmy zostaly naprawione, nie
+zaprojektowane tak od razu:
+
+- **`host: 0.0.0.0` brakowalo w `cordis.yml`/`cordis.dev.yml`.**
+  `@shop/nuxt-wrapper` domyslnie binduje do `127.0.0.1` (poprawne DLA
+  INSTANCJI UKRYTEJ ZA BROKEREM - taki byl domyslny przypadek przed
+  pivotem). Po usunieciu brokera `shop` stal sie JEDYNYM publicznie
+  eksponowanym portem calego systemu, ale wpis w `cordis.yml` nie zostal
+  zaktualizowany o `host: 0.0.0.0` - w Dockerze/Kubernetesie oznaczaloby to
+  odrzucenie KAZDEGO polaczenia z zewnatrz (kontener/pod laczy sie przez
+  wlasny interfejs sieciowy, nie przez loopback), mimo ze lokalne
+  `curl localhost:8080` dzialaloby bez zarzutu (stad bug nigdy nie zostal
+  zlapany lokalnie). Naprawione: `host: 0.0.0.0` dopisane jawnie do wpisu
+  `shop`, zweryfikowane przez `lsof`/`ss` pokazujace `*:8080`, nie
+  `127.0.0.1:8080`.
+- **Make-before-break bazowal na porcie efemerycznym, ktory nie mial juz
+  komu przekierowac ruchu.** Patrz szczegoly w Sekcji 5 - naprawione przez
+  przepisanie `@shop/nuxt-wrapper` na jeden trwaly serwer + podmieniana
+  referencje do funkcji obslugujacej request, zamiast otwierania nowego
+  serwera na nowym porcie przy kazdym reloadzie.
+- **Manifest feature'ow (`routes`) obejmowal tylko strone, nie API.**
+  `modules/product` i `modules/cart` deklarowaly w manifescie WYLACZNIE
+  prefiks strony (`/product`, `/cart`), nie wlasnych server routes
+  (`/api/catalog`, `/api/cart/add`, `/api/cart`, `/api/cart/remove`,
+  `/api/cart/clear`) rejestrowanych przez `addServerHandler` w tym samym
+  pliku. Skutek: `disable('cart')` chowal strone `/cart`, ale zostawial
+  cale jej API w pelni dzialajace (odczyt i mutacja stanu koszyka), co
+  przeczylo samemu celowi funkcji. Naprawione: kazdy modul deklaruje w
+  `routes` WSZYSTKIE wlasne sciezki (strone + kazdy server route), patrz
+  `modules/product/src/module.ts` i `modules/cart/src/module.ts` -
+  zweryfikowane empirycznie: `disable('cart')` -> `/cart`, `GET /api/cart`,
+  `POST /api/cart/remove`, `POST /api/cart/clear` wszystkie `404`,
+  `POST /api/cart/add` (nalezacy do `product`, dluzszy/bardziej specyficzny
+  prefiks) pozostaje `200`.
+- **`register()` stracil walidacje kolizji tras**, ktora mial usuniety
+  `RouterService.register()` (rzucal, gdy dwa RÓZNE instancje probowaly
+  zarejestrowac ta sama trase). Naprawione: `FeatureRegistryService.register()`
+  ma teraz `assertNoRouteCollision()`, rzucajaca przy probie zarejestrowania
+  przez DWA RÓZNE moduly dokladnie tej samej sciezki - zweryfikowane
+  empirycznie (probny modul `evil-twin` z `routes: ['/cart']` -> rzut z
+  czytelnym komunikatem).
+- **`registered = true` bylo ustawiane PRZED udanym `register()`** w
+  `feature-gate.ts` - throw wewnatrz `register()` zostawialby flage trwale
+  `true` bez populacji rejestru (permanentny, cichy fail-open). Naprawione:
+  flaga ustawiana DOPIERO po sukcesie.
+- **Manifest feature'ow byl typowany niezaleznie w 4 miejscach**
+  (3x `module.ts` + inline cast w `feature-gate.ts`) zamiast przez jeden,
+  wspoldzielony typ. Naprawione: `FeatureManifestEntry` + helper
+  `registerShopFeature()` przeniesione do `packages/shared/src/feature-manifest.ts`,
+  importowane wszedzie.
+- **`packages/shared/src/index.ts` (COEFFECT_KEYS, RouteTarget) nigdy nie
+  zostal dotkniety przy pivocie** - dalej listowal usuniety koefekt `router`
+  i orphaned `RouteTarget`, nie mial `features`. Naprawione.
+- **Stale komentarze wskazywaly na usuniety `apps/shop/server/plugins/cordis.ts`**
+  (w `services/feature-registry-service/src/index.ts` i `modules/home/src/module.ts`)
+  - realne ryzyko, ze przyszly kontrybutor odtworzylby dokladnie ten plik i
+  bug, ktory ARCHITECTURE.md#plugin-import-meta-gotcha opisuje jako
+  naprawiony. Naprawione, wskazuja teraz na `feature-gate.ts`.
+- **`deploy/k8s/deployment.yaml` mial komentarz o "Bramie (Service Broker)"**,
+  ktorej ten plik nigdy nie zostal zaktualizowany po pivocie. Naprawione.

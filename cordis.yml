@@ -42,11 +42,21 @@
   name: '@shop/feature-registry-service'
 
 # --- jedyna aplikacja Nuxt (apps/shop, sklada modules/*) ---------------------
+# UWAGA: `host: 0.0.0.0` jest tu WYMAGANE (@shop/nuxt-wrapper domyslnie binduje
+# do 127.0.0.1 - poprawne dla instancji ukrytych za brokerem, ale `shop` jest
+# TERAZ jedynym publicznie eksponowanym portem calego systemu, odkad broker
+# zostal usuniety - patrz ARCHITECTURE.md#11). Bez tego kontener/pod
+# odrzucalby kazde polaczenie z zewnatrz (Docker/k8s lacza sie przez
+# interfejs sieciowy kontenera, nie przez loopback) - zaobserwowane w code
+# review tej sesji, nigdy nie wykryte lokalnie, bo `curl localhost:8080`
+# z tej samej maszyny dziala niezaleznie od tego, na jakim interfejsie
+# proces faktycznie nasluchuje.
 - id: shop
   name: '@shop/nuxt-wrapper'
   config:
     id: shop
     dir: ./apps/shop
+    host: 0.0.0.0
     port: 8080
     inject: ['cart', 'product', 'features']
 

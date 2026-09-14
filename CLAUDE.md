@@ -78,6 +78,27 @@ Test Dockera: `docker build -f deploy/docker/Dockerfile -t shop .`
    `lsof -nP -iTCP:8080 -sTCP:LISTEN` przed testami i NIGDY nie zabijaj
    procesu bez sprawdzenia, czyj jest.
 
+8. **`@shop/nuxt-wrapper` domyslnie binduje do `127.0.0.1`, nie
+   `0.0.0.0`.** Poprawne dla instancji ukrytej za brokerem (historyczny
+   model 3 apek), ale `shop` w `cordis.yml`/`cordis.dev.yml` jest TERAZ
+   jedynym publicznie eksponowanym portem calego systemu (broker usuniety,
+   patrz ARCHITECTURE.md#11) - MUSI miec jawne `host: 0.0.0.0`, inaczej
+   Docker/Kubernetes odrzuca KAZDE polaczenie z zewnatrz (kontener/pod
+   laczy sie przez wlasny interfejs sieciowy, nie przez loopback). Lokalny
+   `curl localhost:8080` dziala niezaleznie od tego ustawienia, wiec ten
+   bug NIGDY nie ujawni sie w testach z tej samej maszyny - sprawdzaj
+   `lsof`/`ss` (powinno pokazac `*:8080`, nie `127.0.0.1:8080`), nie tylko
+   `curl`.
+
+9. **Manifest `routes` w kazdym `modules/*/src/module.ts` MUSI wymieniac
+   WSZYSTKIE wlasne sciezki - strone ORAZ kazdy wlasny `addServerHandler`**,
+   nie tylko prefiks strony. `services/feature-registry-service` gatuje
+   WYLACZNIE sciezki wymienione w `routes`; pominiecie API sprawia, ze
+   `disable(id)` chowa strone, ale zostawia jej API w pelni dzialajace
+   (dokladnie taki bug zgloszony i naprawiony w tej sesji w `modules/product`
+   i `modules/cart`). Uzywaj `registerShopFeature()` z
+   `@shop/shared/feature-manifest`, nie recznego pusha do `runtimeConfig.shopFeatures`.
+
 ## Gdzie czego szukac
 
 - Nowy modul Nuxta (strona/sekcja sklepu): skopiuj strukture `modules/cart`

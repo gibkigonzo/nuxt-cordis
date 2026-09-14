@@ -1,4 +1,5 @@
 import { Service, type Context } from 'cordis'
+import type { FeatureManifestEntry } from '@shop/shared/feature-manifest'
 
 declare module 'cordis' {
   interface Context {
@@ -6,14 +7,7 @@ declare module 'cordis' {
   }
 }
 
-export interface FeatureManifestEntry {
-  /** stabilny identyfikator modulu (np. 'product') */
-  id: string
-  /** prefiksy stron nalezace do tego modulu (np. ['/product']) - patrz resolve() */
-  routes: string[]
-  /** stan poczatkowy, domyslnie true */
-  enabled?: boolean
-}
+export type { FeatureManifestEntry }
 
 interface FeatureState extends FeatureManifestEntry {
   enabled: boolean
@@ -22,9 +16,11 @@ interface FeatureState extends FeatureManifestEntry {
 /**
  * FeatureRegistryService: koefekt 'features'. Odpowiednik warstwy "build-time
  * manifest" + "Nitro root registry providerow" z ARCHITECTURE.md#10 - zbiór
- * MODULOW jest zamkniety w buildzie (kazdy modul Nuxta w `modules/*` dopisuje
+ * MODULOW jest zamkniety w buildzie (kazdy modul Nuxta w modules/* dopisuje
  * siebie do `runtimeConfig.shopFeatures` podczas `setup()`, patrz
- * `apps/shop/server/plugins/cordis.ts`), ale to, KTORE z nich sa aktywne,
+ * `apps/shop/server/middleware/feature-gate.ts` - rejestracja dzieje sie tam,
+ * leniwie przy pierwszym requescie, NIE w server/plugins, patrz
+ * ARCHITECTURE.md#plugin-import-meta-gotcha), ale to, KTORE z nich sa aktywne,
  * jest reaktywnym stanem w pamieci procesu - da sie przelaczac bez rebuildu
  * i bez restartu, dokladnie tak jak `RouterService` przelaczal trasy.
  *
@@ -43,13 +39,16 @@ export class FeatureRegistryService extends Service {
 
   /**
    * Zasila rejestr manifestem wygenerowanym przez modul(y) Nuxta podczas builda
-   * (patrz `nuxt.options.runtimeConfig.shopFeatures` w kazdym `modules/*`).
-   * Bezpieczne do wywolania wielokrotnie (np. po make-before-break podmianie
-   * appki) - istniejacy stan `enabled` jest zachowany, nowe wpisy dostaja
-   * wartosc domyslna.
+   * (patrz `nuxt.options.runtimeConfig.shopFeatures` w kazdym module w
+   * `modules/*`). Bezpieczne do wywolania wielokrotnie (np. po make-before-break
+   * podmianie appki) - istniejacy stan `enabled` jest zachowany, nowe wpisy
+   * dostaja wartosc domyslna. Rzuca, jesli dwa RÓZNE moduly probuja
+   * zarejestrowac dokladnie ta sama sciezke (patrz assertNoRouteCollision) -
+   * odpowiednik walidacji, ktora mial usuniety `RouterService.register()`.
    */
   register(entries: FeatureManifestEntry[]): void {
     for (const entry of entries) {
+      this.assertNoRouteCollision(entry)
       const existing = this.features.get(entry.id)
       this.features.set(entry.id, {
         ...entry,
@@ -80,6 +79,26 @@ export class FeatureRegistryService extends Service {
     if (!feature) throw new Error(`[features] nieznany modul "${id}"`)
     feature.enabled = enabled
     this.ctx.logger.info(`[features] ${id} -> ${enabled ? 'WLACZONY' : 'WYLACZONY'}`)
+  }
+
+  /**
+   * Rzuca, jesli `entry` deklaruje sciezke juz zajeta przez INNY (rozny `id`)
+   * juz zarejestrowany modul - dwa moduly z rozna tozsamoscia nigdy nie
+   * powinny dzielic tej samej sciezki (w przeciwienstwie do wielokrotnej
+   * rejestracji TEGO SAMEGO id, co jest oczekiwane przy kazdym make-before-break
+   * reloadzie i celowo NIE jest tu flagowane).
+   */
+  private assertNoRouteCollision(entry: FeatureManifestEntry): void {
+    for (const [otherId, other] of this.features) {
+      if (otherId === entry.id) continue
+      const collision = entry.routes.find((route) => other.routes.includes(route))
+      if (collision) {
+        throw new Error(
+          `[features] modul "${entry.id}" probuje zarejestrowac sciezke "${collision}", ` +
+          `ktora nalezy juz do modulu "${otherId}" - dwa moduly nie moga dzielic tej samej sciezki.`,
+        )
+      }
+    }
   }
 
   /**

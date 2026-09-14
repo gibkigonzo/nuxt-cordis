@@ -1,4 +1,5 @@
 import { defineNuxtModule, createResolver, addServerHandler } from '@nuxt/kit'
+import { registerShopFeature } from '@shop/shared/feature-manifest'
 
 export interface ModuleOptions {
   routePrefix?: string
@@ -11,6 +12,11 @@ export interface ModuleOptions {
  * logiki. Publiczne sciezki API SWIADOMIE zostaja bez prefiksu modulu
  * (/api/catalog, /api/cart/add) - to wciaz ten sam, jeden zasob "koszyk",
  * ktory modules/cart tez obsluguje, teraz bez brokera prefiksujacego trasy.
+ *
+ * Manifest (`routes`) deklaruje strone ORAZ obie sciezki API - pominiecie
+ * ktorejkolwiek oznaczaloby, ze `disable('product')` chowa strone, ale
+ * zostawia API w pelni dzialajace (zgloszone i naprawione w tej sesji, patrz
+ * ARCHITECTURE.md#feature-registry).
  */
 export default defineNuxtModule<ModuleOptions>({
   meta: {
@@ -35,7 +41,6 @@ export default defineNuxtModule<ModuleOptions>({
     addServerHandler({ route: '/api/catalog', method: 'get', handler: resolve('./runtime/server/api/catalog.get.ts') })
     addServerHandler({ route: '/api/cart/add', method: 'post', handler: resolve('./runtime/server/api/cart/add.post.ts') })
 
-    const shopFeatures = ((nuxt.options.runtimeConfig.shopFeatures ??= []) as unknown[])
-    shopFeatures.push({ id: 'product', routes: [prefix] })
+    registerShopFeature(nuxt.options, { id: 'product', routes: [prefix, '/api/catalog', '/api/cart/add'] })
   },
 })
