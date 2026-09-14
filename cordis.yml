@@ -31,7 +31,21 @@
     debounce: 300
     ignored: ['**/node_modules/**', '**/.output/**', '**/dist/**']
 
-# --- koefekty (wspoldzielone uslugi w pamieci procesu) -----------------------
+# --- Redis: jedyny stan, ktory MUSI byc spojny miedzy wieloma podami tego
+# samego obrazu (koszyk, wlaczone/wylaczone moduly) - patrz uzasadnienie w
+# services/redis-service. `cart-service`/`feature-registry-service` deklaruja
+# `static inject = ['redis']`, wiec aktywuja sie dopiero gdy ten fiber jest
+# gotowy (Theorem 63) - kolejnosc ponizej jest czysto kosmetyczna.
+#
+# UWAGA: celowo BEZ `config.url` tutaj - `cordis.yml` jest zapieczone w obrazie
+# (ARCHITECTURE.md#8), wiec adres Redisa NIE moze byc w nim zahardkodowany
+# (rozny per srodowisko: localhost lokalnie, `redis://redis:6379` w k8s przez
+# DNS namespace'u). RedisService czyta `process.env.REDIS_URL`, z lokalnym
+# `redis://127.0.0.1:6379` jako domyslnym fallbackiem - patrz deploy/k8s/deployment.yaml.
+- id: redis-service
+  name: '@shop/redis-service'
+
+# --- koefekty (wspoldzielone uslugi) -----------------------------------------
 - id: product-service
   name: '@shop/product-service'
 

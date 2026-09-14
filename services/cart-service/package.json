@@ -1,11 +1,14 @@
 {
   "name": "@shop/cart-service",
   "version": "0.1.0",
-  "description": "Koefekt 'cart': serwis stanu koszyka wspoldzielony przez wszystkie instancje Nuxt w procesie (bez narzutu sieciowego).",
+  "description": "Koefekt 'cart': serwis stanu koszyka, przechowywany w Redis (koefekt 'redis') zeby byc spojnym miedzy wieloma replikami (podami) tego samego obrazu.",
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
     "@shop/shared": "workspace:*",
     "cordis": "^4.0.0-rc.8"
+  },
+  "devDependencies": {
+    "@shop/redis-service": "workspace:*"
   }
 }

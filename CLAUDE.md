@@ -29,13 +29,24 @@ Test Dockera: `docker build -f deploy/docker/Dockerfile -t shop .`
 
 ## Kluczowe gotchas (odkryte empirycznie, nie zgaduj inaczej)
 
-1. **`pnpm install` po dodaniu nowej zaleznosci workspace bywa niespojny.**
-   Jesli swiezo dodany pakiet `@shop/*` rzuca `ERR_MODULE_NOT_FOUND` mimo
-   poprawnego symlinku w `node_modules`, zrob pelny reinstall:
-   `rm -rf node_modules packages/*/node_modules services/*/node_modules
-   modules/*/node_modules apps/*/node_modules orchestrator/node_modules &&
-   pnpm install`. Zaobserwowane raz w tej sesji, przyczyna niejasna
-   (prawdopodobnie cache resolvera pnpm), ale reinstall zawsze pomogl.
+1. **`pnpm install` po dodaniu nowej zaleznosci workspace bywa niespojny -
+   znana przyczyna (nie tylko "reinstall pomogl").** `@cordisjs/plugin-loader`
+   rozwiazuje pakiety z `cordis.yml` przez naturalny `import()` Node.js
+   WZGLEDEM WLASNEJ lokalizacji na dysku
+   (`node_modules/.pnpm/@cordisjs+plugin-loader@.../node_modules/...`), nie
+   wzgledem katalogu projektu - Node idzie w gore az trafi na wspolna,
+   splaszczona pule `node_modules/.pnpm/node_modules/` (pnpm), gdzie swiezo
+   dodany pakiet `@shop/*` moze jeszcze nie istniec mimo poprawnego symlinku
+   w `node_modules/@shop/*` samego pakietu, ktory go importuje. Objaw: albo
+   `ERR_MODULE_NOT_FOUND`, albo (gorzej) CICHY exit kodem 0 bez zadnego bledu
+   w logach, bo `@cordisjs/plugin-include`/loader polyka blad importu
+   pojedynczego wpisu. Napraw: (a) upewnij sie, ze nowy pakiet `@shop/*` jest
+   jawnie dodany jako zaleznosc w `package.json` KAZDEGO pakietu, ktory go
+   `inject`-uje (samo wymienienie w `cordis.yml` NIE wystarcza), (b) zrob
+   pelny reinstall: `rm -rf node_modules packages/*/node_modules
+   services/*/node_modules modules/*/node_modules apps/*/node_modules
+   orchestrator/node_modules && pnpm install`. Oba kroki sa konieczne razem -
+   patrz `ARCHITECTURE.md#shared-state` po pelny przebieg debugowania.
 
 2. **`ctx.effect()` wymaga zwrocenia FUNKCJI, nie obiektu z metoda `.dispose`.**
    Kazdy disposer zwracany z `ctx.effect(...)` musi byc wywolywalny

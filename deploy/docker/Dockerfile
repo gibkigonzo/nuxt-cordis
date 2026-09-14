@@ -20,6 +20,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY orchestrator/package.json orchestrator/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/nuxt-wrapper/package.json packages/nuxt-wrapper/package.json
+COPY services/redis-service/package.json services/redis-service/package.json
 COPY services/cart-service/package.json services/cart-service/package.json
 COPY services/product-service/package.json services/product-service/package.json
 COPY services/feature-registry-service/package.json services/feature-registry-service/package.json

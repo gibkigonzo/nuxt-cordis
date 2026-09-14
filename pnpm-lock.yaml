@@ -101,6 +101,9 @@ importers:
       '@shop/product-service':
         specifier: workspace:*
         version: link:../services/product-service
+      '@shop/redis-service':
+        specifier: workspace:*
+        version: link:../services/redis-service
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
@@ -135,6 +138,10 @@ importers:
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
+    devDependencies:
+      '@shop/redis-service':
+        specifier: workspace:*
+        version: link:../redis-service
 
   services/feature-registry-service:
     dependencies:
@@ -144,6 +151,10 @@ importers:
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
+    devDependencies:
+      '@shop/redis-service':
+        specifier: workspace:*
+        version: link:../redis-service
 
   services/product-service:
     dependencies:
@@ -153,6 +164,15 @@ importers:
       cordis:
         specifier: ^4.0.0-rc.8
         version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
+
+  services/redis-service:
+    dependencies:
+      cordis:
+        specifier: ^4.0.0-rc.8
+        version: 4.0.0-rc.8(@cordisjs/plugin-include@1.0.4)(@cordisjs/plugin-loader@1.0.0-rc.5)
+      ioredis:
+        specifier: ^5.4.1
+        version: 5.11.1
 
 packages:
 

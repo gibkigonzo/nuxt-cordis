@@ -17,6 +17,7 @@
     "@shop/feature-registry-service": "workspace:*",
     "@shop/nuxt-wrapper": "workspace:*",
     "@shop/product-service": "workspace:*",
+    "@shop/redis-service": "workspace:*",
     "cordis": "^4.0.0-rc.8"
   }
 }

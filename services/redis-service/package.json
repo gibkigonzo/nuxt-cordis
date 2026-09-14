@@ -1,0 +1,11 @@
+{
+  "name": "@shop/redis-service",
+  "version": "0.1.0",
+  "description": "Koefekt 'redis': wspoldzielone polaczenie Redis (jedno per proces), z ktorego korzystaja cart-service i feature-registry-service, zeby ich stan byl spojny miedzy wieloma replikami (podami) tego samego obrazu.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "cordis": "^4.0.0-rc.8",
+    "ioredis": "^5.4.1"
+  }
+}

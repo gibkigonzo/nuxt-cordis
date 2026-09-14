@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: shop
 resources:
   - namespace.yaml
+  - redis-deployment.yaml
   - deployment.yaml
   - service.yaml
 images:
