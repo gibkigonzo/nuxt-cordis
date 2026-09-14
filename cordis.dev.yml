@@ -25,7 +25,13 @@
     debounce: 300
     ignored: ['**/node_modules/**', '**/.output/**', '**/dist/**']
 
-# --- koefekty (wspoldzielone uslugi w pamieci procesu) -----------------------
+# --- Redis: stan wspoldzielony miedzy podami (koszyk, feature-toggle) - patrz
+# uzasadnienie w cordis.yml/services/redis-service. Bez `config.url` - czyta
+# process.env.REDIS_URL, domyslnie redis://127.0.0.1:6379 (lokalny redis-server).
+- id: redis-service
+  name: '@shop/redis-service'
+
+# --- koefekty (wspoldzielone uslugi) -----------------------------------------
 - id: product-service
   name: '@shop/product-service'
 

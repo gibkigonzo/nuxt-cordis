@@ -1,8 +1,21 @@
-# Pojedynczy kontener/serwis - to jest sedno "modularnego monolitu runtime":
-# trzy (lub wiecej) aplikacje Nuxt + uslugi + brama dzialaja w JEDNYM procesie
-# Node, nie w osobnych kontenerach. Skalowanie poziome = wiecej replik CALEGO
-# procesu za zewnetrznym load balancerem (nie: wiecej kontenerow per aplikacja).
+# Jeden kontener aplikacyjny ('shop') + jeden kontener Redis - to jest sedno
+# "modularnego monolitu runtime": JEDNA aplikacja Nuxt (skladajaca moduly
+# przez Nuxt Modules, patrz ARCHITECTURE.md#10) + uslugi backendowe dzialaja
+# w JEDNYM procesie Node, nie w osobnych kontenerach per modul. Redis jest
+# WYJATKIEM - to jedyny stan, ktory musi byc spojny miedzy wieloma replikami
+# 'shop' (patrz services/redis-service), wiec zyje jako osobny, dzielony
+# proces/kontener. Skalowanie poziome 'shop' = wiecej replik CALEGO procesu
+# za zewnetrznym load balancerem, wszystkie wskazujace na TEN SAM Redis.
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
   shop:
     build:
       context: ../..
@@ -13,6 +26,10 @@ services:
     environment:
       NODE_ENV: production
       CORDIS_CONFIG: ./cordis.yml
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'node', '-e', 'fetch("http://localhost:8080/").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))']

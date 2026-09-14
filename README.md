@@ -38,9 +38,10 @@ modules/home                Nuxt Module - strona glowna (trasa: /)
 modules/product              Nuxt Module - katalog produktow (trasa: /product)
 modules/cart                   Nuxt Module - koszyk (trasa: /cart)
 
-services/cart-service         koefekt 'cart'    - stan koszyka w pamieci procesu
+services/cart-service         koefekt 'cart'    - stan koszyka (Redis Hash, wspoldzielony)
 services/product-service       koefekt 'product' - katalog produktow
-services/feature-registry-service koefekt 'features' - ktore moduly sa aktualnie wlaczone
+services/feature-registry-service koefekt 'features' - ktore moduly sa aktualnie wlaczone (Redis, wspoldzielony)
+services/redis-service          koefekt 'redis'   - wspoldzielone polaczenie Redis (jedno per proces)
 
 packages/nuxt-wrapper   Cordis-owy wrapper: start/stop zbudowanej apki Nuxt
 packages/shared         wspoldzielone typy + "bridge" (patrz ARCHITECTURE.md)
@@ -65,12 +66,21 @@ Cordisa, ktore SAME konsumuja koefekty, ale niczego nie dostarczaja innym
 - Node.js **24+** (dziala tez na 22.6+ dzieki natywnemu "type stripping", ale
   22 wypisuje eksperymentalne ostrzezenia - patrz `ARCHITECTURE.md#typescript`)
 - pnpm 9 (`corepack enable` jesli nie masz)
-- Do deploymentu (nie do lokalnego dev): Docker, oraz `kubectl`/`kustomize`
-  jesli wdrazasz na Kubernetesie - patrz `deploy/README.md#kubernetes`
+- **Redis** (lokalnie: `redis-server` dostepny na `redis://127.0.0.1:6379`,
+  domyslny adres jesli `REDIS_URL` nie jest ustawiony) - koefekt `redis`
+  wymagany przez `CartService`/`FeatureRegistryService`, patrz sekcja
+  "Wspoldzielony stan (Redis)" nizej
+- Do deploymentu (nie do lokalnego dev): Docker (docker-compose uruchamia
+  Redis automatycznie), oraz `kubectl`/`kustomize` jesli wdrazasz na
+  Kubernetesie - patrz `deploy/README.md#kubernetes`
 
 ## Szybki start (lokalnie)
 
 ```sh
+# Redis musi juz nasluchiwac przed startem orchestratora (koefekt 'redis'
+# jest w cordis.yml przed nuxt-wrapper - patrz "Wspoldzielony stan" nizej)
+redis-server --daemonize yes   # albo dowolny inny sposob uruchomienia Redis
+
 pnpm install
 
 # zbuduj JEDNA aplikacje Nuxt (Nitro preset "node-listener")
@@ -116,6 +126,44 @@ efemerycznym" - poprawny WYLACZNIE gdy broker przekierowywal ruch - po
 usunieciu brokera psul caly system po pierwszym reloadzie). Stan uslug
 backendowych (`CartService`, `ProductService`, `FeatureRegistryService` -
 osobne fibery) przetrwa w calosci niezaleznie od podmiany appki.
+
+## Wspoldzielony stan (Redis)
+
+`deploy/k8s/deployment.yaml` ustawia `replicas: 2` - wiele podow tego samego
+obrazu za jednym k8s Service (bez sticky sessions), wiec KOLEJNE requesty tego
+samego uzytkownika moga trafic do RÓZNYCH podow. Dwa fragmenty stanu MUSZA
+byc wiec spojne miedzy podami, nie per-proces:
+
+- **koszyk** (`CartService`) - Redis Hash `shop:cart:<cartId>`, TTL 7 dni
+  odswiezany przy kazdym zapisie
+- **feature-toggle** (`FeatureRegistryService`) - Redis Hash
+  `shop:features:enabled` - `enable(id)`/`disable(id)` wywolane na jednym
+  podzie musi natychmiast obowiazywac na WSZYSTKICH
+
+Trzeci fragment stanu `FeatureRegistryService` (manifest tras: ktory modul
+odpowiada za ktora sciezke) zyje CELOWO lokalnie w pamieci kazdego poda - jest
+identyczny wszedzie (ten sam obraz), wiec nie ma czego synchronizowac, a
+trzymanie go lokalnie utrzymuje `resolve()` (wolane przy kazdym requescie)
+szybkim, bez zapytania sieciowego na hot path routingu.
+
+`services/redis-service` (koefekt `redis`) to jedno wspoldzielone polaczenie
+`ioredis` per proces, z ktorego korzystaja oba serwisy powyzej
+(`static inject = ['redis']`). Adres: `config.url` w `cordis.yml` (celowo
+NIEustawiony - baked-in obraz nie moze zaszywac adresu per-srodowisko) albo
+`REDIS_URL` (ustawiane per-srodowisko: `docker-compose.yml` ->
+`redis://redis:6379`, `deploy/k8s/deployment.yaml` -> `redis://redis:6379`
+wskazujace `deploy/k8s/redis-deployment.yaml`), z fallbackiem na
+`redis://127.0.0.1:6379` dla lokalnego dev.
+
+Zweryfikowane empirycznie w tej sesji przez symulacje dwoch podow (dwa
+niezalezne procesy orchestratora na portach 8080/8081, ten sam Redis, ten sam
+cookie jar): pozycja dodana do koszyka na porcie 8080 natychmiast widoczna i
+laczona na porcie 8081, i odwrotnie; `disable('cart')` (zapis do Redis)
+natychmiast gatuje `/cart` ORAZ `/api/cart` na OBU portach jednoczesnie.
+Redis w `deploy/k8s/redis-deployment.yaml` to swiadomy kompromis: pojedynczy
+pod bez PVC/replikacji (dane gina przy restarcie tego poda) - pelna
+odpornosc (Sentinel/Cluster) to osobny, wiekszy projekt, patrz komentarz w
+tym pliku.
 
 ## Skladanie/wylaczanie funkcjonalnosci bez rebuildu
 
@@ -177,6 +225,12 @@ tylko zaprojektowane na papierze):
       patrz sekcja wyzej i ARCHITECTURE.md#5)
 - [x] graceful shutdown (SIGTERM) - kaskadowe zamkniecie w kolejnosci LIFO
 - [x] `docker build` + `docker run` + `docker stop` calego systemu
+- [x] wspoldzielony stan Redis (`CartService`, `FeatureRegistryService`) -
+      zweryfikowane przez symulacje dwoch podow (dwa procesy orchestratora
+      na roznych portach, ten sam Redis): pozycja koszyka dodana na jednym
+      podzie natychmiast widoczna/laczona na drugim; `disable('cart')`
+      natychmiast gatuje `/cart` i `/api/cart` na OBU podach jednoczesnie -
+      patrz "Wspoldzielony stan (Redis)" wyzej
 - [x] `host: 0.0.0.0` w `cordis.yml` - proces nasluchuje na wszystkich
       interfejsach (`*:8080`, zweryfikowane przez `lsof`), nie tylko na
       loopback (patrz ARCHITECTURE.md#pivot-fixes - wczesniej brakujace,

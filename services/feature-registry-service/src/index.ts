@@ -1,5 +1,10 @@
 import { Service, type Context } from 'cordis'
 import type { FeatureManifestEntry } from '@shop/shared/feature-manifest'
+// import samych deklaracji `declare module 'cordis'` z redis-service (augmentacja
+// ctx.redis dla edytora/TS) - `import type` jest zawsze usuwany przez
+// type-stripping, wiec brak wplywu na runtime. Realna zaleznosc runtime jest
+// deklarowana przez `static inject = ['redis']` ponizej.
+import type {} from '@shop/redis-service'
 
 declare module 'cordis' {
   interface Context {
@@ -9,9 +14,13 @@ declare module 'cordis' {
 
 export type { FeatureManifestEntry }
 
-interface FeatureState extends FeatureManifestEntry {
-  enabled: boolean
+interface FeatureRoutes {
+  id: string
+  routes: string[]
 }
+
+/** Redis Hash: pole = id modulu, wartosc = '1' (wlaczony) lub '0' (wylaczony). */
+const ENABLED_KEY = 'shop:features:enabled'
 
 /**
  * FeatureRegistryService: koefekt 'features'. Odpowiednik warstwy "build-time
@@ -20,64 +29,81 @@ interface FeatureState extends FeatureManifestEntry {
  * siebie do `runtimeConfig.shopFeatures` podczas `setup()`, patrz
  * `apps/shop/server/middleware/feature-gate.ts` - rejestracja dzieje sie tam,
  * leniwie przy pierwszym requescie, NIE w server/plugins, patrz
- * ARCHITECTURE.md#plugin-import-meta-gotcha), ale to, KTORE z nich sa aktywne,
- * jest reaktywnym stanem w pamieci procesu - da sie przelaczac bez rebuildu
- * i bez restartu, dokladnie tak jak `RouterService` przelaczal trasy.
+ * ARCHITECTURE.md#plugin-import-meta-gotcha).
+ *
+ * Stan jest CELOWO rozdzielony na dwie czesci o roznym charakterze:
+ * - `routes` (ksztalt manifestu: id -> lista sciezek) zyje LOKALNIE, w
+ *   pamieci kazdego podu - jest identyczny wszedzie (ten sam obraz), wiec
+ *   nie ma czego synchronizowac. Trzymanie go lokalnie utrzymuje `resolve()`
+ *   (wolane przy KAZDYM requescie w feature-gate.ts) szybkim - bez zadnego
+ *   zapytania sieciowego na hot path routingu.
+ * - `enabled`/`disabled` zyje w Redis (koefekt 'redis') - to JEDYNA czesc
+ *   stanu, ktora MUSI byc spojna miedzy wieloma podami tego samego obrazu:
+ *   `disable('cart')` wywolane na jednym podzie musi natychmiast obowiazywac
+ *   na WSZYSTKICH, inaczej za k8s Service (bez sticky sessions) uzytkownik
+ *   widzialby losowo wlaczona/wylaczona funkcje zaleznie od tego, ktory pod
+ *   akurat obsluzyl jego request - dokladnie ten problem zgloszony i
+ *   naprawiony w tej sesji (patrz ARCHITECTURE.md).
  *
  * Kluczowa roznica wzgledem usunietego `@shop/remote-sync` (ARCHITECTURE.md#8):
  * tu NIC nowego nie jest importowane w runtime - `enable()`/`disable()` tylko
  * przelaczaja widocznosc kodu, ktory juz przeszedl build+review+CI i jest
- * czescia tego samego, jednego `.output`.
+ * czescia tego samego, jednego `.output`. Redis przechowuje WYLACZNIE proste
+ * wartosci '0'/'1', nigdy kod.
  */
 export class FeatureRegistryService extends Service {
-  private features: Map<string, FeatureState>
+  static inject = ['redis']
+
+  private routes: Map<string, FeatureRoutes>
 
   constructor(ctx: Context) {
     super(ctx, 'features')
-    this.features = new Map()
+    this.routes = new Map()
   }
 
   /**
-   * Zasila rejestr manifestem wygenerowanym przez modul(y) Nuxta podczas builda
-   * (patrz `nuxt.options.runtimeConfig.shopFeatures` w kazdym module w
-   * `modules/*`). Bezpieczne do wywolania wielokrotnie (np. po make-before-break
-   * podmianie appki) - istniejacy stan `enabled` jest zachowany, nowe wpisy
-   * dostaja wartosc domyslna. Rzuca, jesli dwa RÓZNE moduly probuja
+   * Zasila lokalny manifest tras (patrz docstring klasy) i seeduje domyslny
+   * stan `enabled` w Redis - WYLACZNIE dla modulow, ktore jeszcze tam nie
+   * istnieja (`HSETNX`). Jesli inny pod (albo poprzednie uruchomienie tego
+   * samego poda) juz przelaczyl dany modul, ta rejestracja NIGDY nie
+   * nadpisuje tamtego stanu. Bezpieczne do wywolania wielokrotnie (np. po
+   * hot-reloadzie appki). Rzuca, jesli dwa RÓZNE moduly probuja
    * zarejestrowac dokladnie ta sama sciezke (patrz assertNoRouteCollision) -
    * odpowiednik walidacji, ktora mial usuniety `RouterService.register()`.
    */
-  register(entries: FeatureManifestEntry[]): void {
+  async register(entries: FeatureManifestEntry[]): Promise<void> {
     for (const entry of entries) {
       this.assertNoRouteCollision(entry)
-      const existing = this.features.get(entry.id)
-      this.features.set(entry.id, {
-        ...entry,
-        enabled: existing?.enabled ?? entry.enabled ?? true,
-      })
+      this.routes.set(entry.id, { id: entry.id, routes: entry.routes })
+      await this.ctx.redis.client.hsetnx(ENABLED_KEY, entry.id, entry.enabled === false ? '0' : '1')
     }
     this.ctx.logger.info(`[features] zarejestrowano: ${entries.map((e) => e.id).join(', ') || '(brak)'}`)
   }
 
-  list(): FeatureState[] {
-    return [...this.features.values()]
+  async list(): Promise<Array<FeatureManifestEntry & { enabled: boolean }>> {
+    const ids = [...this.routes.keys()]
+    if (!ids.length) return []
+    const raw = await this.ctx.redis.client.hmget(ENABLED_KEY, ...ids)
+    return ids.map((id, i) => ({ ...this.routes.get(id)!, enabled: raw[i] !== '0' }))
   }
 
-  isEnabled(id: string): boolean {
-    return this.features.get(id)?.enabled ?? false
+  async isEnabled(id: string): Promise<boolean> {
+    if (!this.routes.has(id)) return false
+    const value = await this.ctx.redis.client.hget(ENABLED_KEY, id)
+    return value !== '0'
   }
 
-  enable(id: string): void {
-    this.setEnabled(id, true)
+  async enable(id: string): Promise<void> {
+    await this.setEnabled(id, true)
   }
 
-  disable(id: string): void {
-    this.setEnabled(id, false)
+  async disable(id: string): Promise<void> {
+    await this.setEnabled(id, false)
   }
 
-  private setEnabled(id: string, enabled: boolean): void {
-    const feature = this.features.get(id)
-    if (!feature) throw new Error(`[features] nieznany modul "${id}"`)
-    feature.enabled = enabled
+  private async setEnabled(id: string, enabled: boolean): Promise<void> {
+    if (!this.routes.has(id)) throw new Error(`[features] nieznany modul "${id}"`)
+    await this.ctx.redis.client.hset(ENABLED_KEY, id, enabled ? '1' : '0')
     this.ctx.logger.info(`[features] ${id} -> ${enabled ? 'WLACZONY' : 'WYLACZONY'}`)
   }
 
@@ -85,11 +111,12 @@ export class FeatureRegistryService extends Service {
    * Rzuca, jesli `entry` deklaruje sciezke juz zajeta przez INNY (rozny `id`)
    * juz zarejestrowany modul - dwa moduly z rozna tozsamoscia nigdy nie
    * powinny dzielic tej samej sciezki (w przeciwienstwie do wielokrotnej
-   * rejestracji TEGO SAMEGO id, co jest oczekiwane przy kazdym make-before-break
-   * reloadzie i celowo NIE jest tu flagowane).
+   * rejestracji TEGO SAMEGO id, co jest oczekiwane przy kazdym hot-reloadzie
+   * i celowo NIE jest tu flagowane). Dziala WYLACZNIE na lokalnym stanie
+   * (`routes`), zero zapytan do Redis.
    */
   private assertNoRouteCollision(entry: FeatureManifestEntry): void {
-    for (const [otherId, other] of this.features) {
+    for (const [otherId, other] of this.routes) {
       if (otherId === entry.id) continue
       const collision = entry.routes.find((route) => other.routes.includes(route))
       if (collision) {
@@ -107,11 +134,14 @@ export class FeatureRegistryService extends Service {
    * wlaczony). `undefined` oznacza "zaden zarejestrowany modul nie deklaruje
    * tej sciezki" - taki request przechodzi dalej bez ingerencji (normalny
    * routing/404 Nuxta), patrz `apps/shop/server/middleware/feature-gate.ts`.
+   * CELOWO synchroniczne i lokalne (patrz docstring klasy) - zero zapytan do
+   * Redis na hot path routingu; middleware odpytuje Redis (przez isEnabled())
+   * TYLKO gdy sciezka faktycznie nalezy do jakiegos modulu.
    */
   resolve(pathname: string): string | undefined {
     let best: string | undefined
     let bestLen = -1
-    for (const feature of this.features.values()) {
+    for (const feature of this.routes.values()) {
       for (const prefix of feature.routes) {
         const matches = pathname === prefix || pathname.startsWith(prefix + '/')
         if (matches && prefix.length > bestLen) {

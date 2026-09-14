@@ -593,3 +593,154 @@ zaprojektowane tak od razu:
   naprawiony. Naprawione, wskazuja teraz na `feature-gate.ts`.
 - **`deploy/k8s/deployment.yaml` mial komentarz o "Bramie (Service Broker)"**,
   ktorej ten plik nigdy nie zostal zaktualizowany po pivocie. Naprawione.
+
+## 12. Wspoldzielony stan miedzy podami: Redis dla koszyka i feature-togglow {#shared-state}
+
+### Problem
+
+`deploy/k8s/deployment.yaml` ustawia `replicas: 2` - wiele podow tego samego
+obrazu za jednym k8s `Service` (`ClusterIP`, bez sticky sessions/affinity po
+sesji). Kolejne requesty tego samego uzytkownika moga wiec trafic do RÓZNYCH
+podow. Przed ta sekcja `CartService` trzymal koszyki w zwyklym `Map` w
+pamieci procesu, a `FeatureRegistryService` trzymal `enabled`/`disabled` tez
+lokalnie - oba byly per-proces, nie per-system. Pytanie, ktore to ujawnilo:
+czy scoped zmienne (`let registered = false` w `feature-gate.ts`) i wzorce w
+rodzaju `globalThis` sa bledem przy `replicas > 1`? Odpowiedz: TAK dla stanu,
+ktory MUSI byc spojny miedzy podami (koszyk, feature-toggle), NIE dla stanu,
+ktory jest identyczny na kazdym podzie z definicji (manifest tras - ten sam
+obraz wszedzie) - `feature-gate.ts` uzywa scoped zmiennej WYLACZNIE do
+pamietania "czy TEN proces juz zarejestrowal swoj lokalny manifest w Redis",
+co jest poprawne per-proces z definicji.
+
+### Rozwiazanie: `services/redis-service` (koefekt `redis`)
+
+Nowy komponent Cordis dostarczajacy JEDNO wspoldzielone polaczenie `ioredis`
+per proces (`ctx.effect()`, `lazyConnect: true` + jawny `.connect()`/`.quit()`
+w cyklu zycia efektu). Celowo BEZ wrapperow na komendy - konsumenci
+(`CartService`, `FeatureRegistryService`) uzywaja `ctx.redis.client` wprost
+(`hset`/`hget`/`hgetall`/`hincrby`/... - standardowe API `ioredis`), bo
+dodatkowa warstwa abstrakcji nad juz-czytelnym API Redis nie dodawalaby nic
+poza koniecznoscia utrzymania. Adres polaczenia: `config.url` w `cordis.yml`
+celowo NIEustawiony (obraz jest ten sam we wszystkich srodowiskach, adres
+Redis nie jest) - kolejnosc: `config.url` -> `process.env.REDIS_URL` ->
+`redis://127.0.0.1:6379` (fallback lokalny dev).
+
+`CartService` i `FeatureRegistryService` deklaruja `static inject = ['redis']`
+- Cordis gwarantuje, ze ich fiber aktywuje sie DOPIERO po udanym polaczeniu
+`RedisService` (Corollary o gated activation, patrz Sekcja 3), wiec obie
+uslugi moga zakladac dzialajace polaczenie od pierwszej metody.
+
+**Koszyk** (`services/cart-service`): Redis Hash `shop:cart:<cartId>`
+(pole = `productId`, wartosc = JSON `{quantity, name, price}` lub podobny
+ksztalt), TTL 7 dni odswiezany (`EXPIRE`) przy kazdym zapisie. Wszystkie
+metody sa teraz `async` (poprzednio synchroniczne operacje na `Map`) - stad
+kaskadowa zmiana na `await` w `modules/cart/src/runtime/server/api/*` i
+`modules/product/src/runtime/server/api/cart/add.post.ts`.
+
+**Feature-toggle** (`services/feature-registry-service`): stan jest CELOWO
+rozdzielony na dwie czesci o roznym charakterze (patrz tez docstring klasy w
+kodzie):
+- `routes` (manifest: id modulu -> lista sciezek) zyje LOKALNIE w pamieci
+  kazdego poda - identyczny wszedzie (ten sam obraz), wiec nie ma czego
+  synchronizowac. Trzymanie lokalnie utrzymuje `resolve()` (wolane przy
+  KAZDYM requescie w `feature-gate.ts`) synchronicznym i szybkim - zero
+  zapytania sieciowego na hot path routingu.
+- `enabled` zyje w Redis Hash `shop:features:enabled` (pole = id modulu,
+  wartosc `'0'`/`'1'`) - JEDYNA czesc stanu, ktora MUSI byc spojna miedzy
+  podami: `disable('cart')` wywolane na jednym podzie musi natychmiast
+  obowiazywac na WSZYSTKICH, inaczej uzytkownik widzialby losowo
+  wlaczona/wylaczona funkcje zaleznie od tego, ktory pod akurat obsluzyl
+  jego request.
+
+`register()` uzywa `HSETNX` (set-if-not-exists) do seedowania domyslnego
+stanu w Redis - bezpieczne przy wielokrotnym wywolaniu (kazdy pod przy
+starcie, kazdy hot-reload appki w dev) bez nadpisywania stanu juz
+przelaczonego przez inny pod/wczesniejsze uruchomienie.
+
+`apps/shop/server/middleware/feature-gate.ts` rejestruje manifest leniwie,
+przy pierwszym requescie danego procesu (patrz Sekcja 2,
+`#plugin-import-meta-gotcha` - dlaczego nie w `server/plugins/*`). Poniewaz
+`register()` jest teraz `async`, prosta flaga `let registered = false` nie
+wystarcza - wspolbiezne requesty trafiajace w oknie miedzy startem a
+zakonczeniem pierwszej rejestracji uruchomilyby ja wielokrotnie rownolegle.
+Naprawione przez memoizacje PROMISE'A, nie boola:
+`let registration: Promise<void> | undefined` - pierwszy request ustawia go
+i czeka, kazdy kolejny (rownolegly LUB pozniejszy) czeka na TEN SAM promise
+zamiast wywolywac `register()` ponownie.
+
+### Weryfikacja: symulacja dwoch podow
+
+Zweryfikowane empirycznie w tej sesji, nie tylko zaprojektowane na papierze:
+dwa niezalezne procesy `orchestrator` (kopia `cordis.yml` ze zmienionym
+portem na 8081, ten sam lokalny Redis) uruchomione rownoczesnie, symulujace
+dwa pody za jednym k8s Service.
+
+- **Koszyk**: `POST /api/cart/add` na porcie 8080 (z cookie jar), nastepnie
+  `GET /api/cart` na porcie 8081 z tym samym jar -> pozycja natychmiast
+  widoczna. `POST /api/cart/add` (inny produkt) na 8081 -> `GET /api/cart`
+  na 8080 pokazuje OBIE pozycje polaczone. Dokladnie scenariusz, ktory byl
+  wczesniej zepsuty (per-proces `Map`) - teraz naprawiony.
+- **Feature-toggle**: zapis `HSET shop:features:enabled cart 0` (dokladnie
+  to, co robi `disable('cart')`) -> `GET /cart` i `GET /api/cart` natychmiast
+  `404` na OBU portach jednoczesnie, bez restartu zadnego z procesow.
+  Ponowny zapis `1` przywraca `200` na obu portach natychmiast.
+
+### Deployment: `deploy/k8s/redis-deployment.yaml`
+
+Redis self-hosted w tym samym klastrze (nie zewnetrzny managed serwis, nie
+Cloudflare) - swiadomy wybor: prostota (jeden dodatkowy `Deployment`+`Service`
+w tym samym kustomize, zero nowych sekretow/kont zewnetrznych, zero
+zaleznosci od sieci poza klastrem) kosztem operacyjnym opisanym ponizej.
+`REDIS_URL=redis://redis:6379` (DNS wewnatrz-klastrowy k8s Service) trafia do
+`shop` przez `env:` w `deployment.yaml` - `cordis.yml` (wpieczone w obraz)
+CELOWO nie zawiera adresu, zeby ten sam obraz dzialal identycznie lokalnie
+(`docker-compose.yml`, `REDIS_URL=redis://redis:6379` - inna siec Docker, ta
+sama zmienna) i w klastrze.
+
+Swiadome kompromisy `redis-deployment.yaml` (udokumentowane tez w komentarzu
+w tym pliku):
+- **Brak PersistentVolumeClaim** - dane w Redis (koszyki, stan feature'ow)
+  gina przy KAZDYM restarcie tego poda (rolling update samego Redis, OOM,
+  przeniesienie na inny wezel). Zaakceptowane: koszyk to stan efemeryczny z
+  natury (TTL 7 dni i tak), a feature-toggle wraca do domyslnego stanu z
+  manifestu (`HSETNX` w `register()`) - nic nie zostaje trwale utracone poza
+  "kims trzeba bedzie ponownie recznie przelaczyc feature, ktory byl
+  wczesniej wylaczony".
+- **Brak replikacji/Sentinela** - `redis` to teraz pojedynczy punkt awarii
+  calego systemu (jesli ten jeden pod padnie, `shop` traci dostep do
+  koszyka i feature-togglow, dopoki k8s go nie zrestartuje). `RollingUpdate`
+  z `maxSurge: 0`/`maxUnavailable: 1` gwarantuje, ze nigdy nie dziala
+  jednoczesnie wiecej niz jeden pod Redis (uniknac dwoch rozjezdzajacych sie
+  zrodel prawdy), kosztem krotkiego okna niedostepnosci podczas KAZDEJ
+  aktualizacji samego Redis (rzadkie - `redis:7-alpine` to gotowy obraz, nie
+  wlasny kod).
+- Prawdziwa odpornosc (PVC + Sentinel/Cluster, wieloregionowosc) to osobny,
+  wiekszy projekt - celowo NIE podjety bez wyraznej prosby uzytkownika, z tych
+  samych powodow co Sekcja 8 (nie rozszerzaj zakresu bez pytania).
+
+### Dodatkowe odkrycie przy implementacji: rozwiazywanie modulow przez `@cordisjs/plugin-loader`
+
+Podczas dodawania `@shop/redis-service` jako nowego pakietu workspace,
+orchestrator poczatkowo konczyl sie CICHO (kod wyjscia 0, zero bledow, zero
+eventow fiberow dla trzech nowych serwisow) - bez zadnego wyjatku w logach.
+Root cause (po systematycznym debugowaniu - bezposredni `ctx.plugin()` z
+pominieciem loadera dzialal poprawnie, wiec problem byl specyficzny dla
+YAML-owej sciezki instancjacji): `@cordisjs/plugin-loader`
+(`Entry._init()` -> `this.parent.tree.import(name, ...)`) rozwiazuje pakiety
+przez naturalny `import()` Node.js WZGLEDEM WLASNEJ, faktycznej lokalizacji
+pliku loadera na dysku (`node_modules/.pnpm/@cordisjs+plugin-loader@.../
+node_modules/@cordisjs/plugin-loader/lib/index.js`), NIE wzgledem "logicznego"
+katalogu projektu. Node idzie w gore od tej lokalizacji az trafi na wspolna,
+splaszczona pule `node_modules/.pnpm/node_modules/` (mechanizm pnpm, w ktorej
+ladowane sa pakiety widoczne dla WSZYSTKICH workspace'ow jednoczesnie) -
+swiezo dodany pakiet workspace moze tam nie istniec, mimo poprawnego symlinku
+w `node_modules/@shop/*` samego `orchestrator`, dopoki nie zostanie
+wykonany PELNY reinstall (nie samo `pnpm install` scoped do jednego pakietu).
+To jest DOKLADNIE ten sam mechanizm, co CLAUDE.md gotcha #1 ("`pnpm install`
+po dodaniu nowej zaleznosci workspace bywa niespojny") - tu po raz pierwszy
+zrozumiany az do konkretnej przyczyny (a nie tylko "reinstall zawsze
+pomogl"). Dodatkowy, osobny warunek konieczny: nowy pakiet `@shop/*` MUSI byc
+jawnie dodany jako zaleznosc w `orchestrator/package.json` (nie wystarczy, ze
+jest wymieniony w `cordis.yml`) - bez tego wpisu loader w ogole nie ma go
+czego szukac. Oba warunki musza byc spelnione: wpis w
+`orchestrator/package.json` ORAZ pelny reinstall.

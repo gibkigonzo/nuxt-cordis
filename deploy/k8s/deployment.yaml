@@ -1,10 +1,12 @@
 # Normalny deployment kubernetesowy calego "modularnego monolitu runtime"
-# (jeden obraz = jeden proces Node = home + product + cart + brama, patrz
+# (jeden obraz = jeden proces Node = apps/shop + uslugi backendowe, patrz
 # deploy/docker/Dockerfile). Aktualizacja KTOREGOKOLWIEK modulu (w tym
 # pojedynczej aplikacji Nuxt) = nowy obraz (nowy tag, zwykle git sha) +
 # standardowy rolling update ponizej - zero pobierania/rozpakowywania kodu
 # przez siec w dzialajacym procesie (patrz deploy/README.md#kubernetes po
-# pelne wyjasnienie i uzasadnienie tej decyzji).
+# pelne wyjasnienie i uzasadnienie tej decyzji). `replicas: 2` ponizej
+# WYMAGA redis-deployment.yaml (koefekt 'redis') - bez niego stan koszyka i
+# feature-togglow byloby niespojne miedzy podami, patrz ARCHITECTURE.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -46,6 +48,8 @@ spec:
           env:
             - name: NODE_ENV
               value: production
+            - name: REDIS_URL
+              value: redis://redis:6379
           # apps/shop (modul home) odpowiada na `/` ruchem strony glownej -
           # ten sam endpoint uzywa juz deploy/docker/docker-compose.yml jako
           # healthcheck. WYMAGA host: 0.0.0.0 w cordis.yml (patrz komentarz

@@ -1,11 +1,14 @@
 {
   "name": "@shop/feature-registry-service",
   "version": "0.1.0",
-  "description": "Koefekt 'features': rejestr modulow zbudowanych do jednej appki (apps/shop) wraz z ich stanem wlaczenia - pozwala wlaczac/wylaczac juz-skompilowany modul bez rebuildu.",
+  "description": "Koefekt 'features': rejestr modulow zbudowanych do jednej appki (apps/shop). Stan wlaczenia zyje w Redis (koefekt 'redis'), zeby byc spojny miedzy wieloma replikami (podami) tego samego obrazu.",
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
     "@shop/shared": "workspace:*",
     "cordis": "^4.0.0-rc.8"
+  },
+  "devDependencies": {
+    "@shop/redis-service": "workspace:*"
   }
 }
