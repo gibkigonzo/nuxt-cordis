@@ -10,8 +10,9 @@ Status weryfikacji kazdej czesci - patrz `../README.md#status-weryfikacji`.
 ## Docker (build lokalny / smoke test) {#docker}
 
 Jeden kontener = caly system (jeden proces Node, jeden publiczny port: 8080).
-Zweryfikowane w tym repo: `docker build`, `docker run`, ruch HTTP przez
-brokera do wszystkich trzech aplikacji, wspoldzielony stan koszyka miedzy
+Zweryfikowane w tym repo: `docker build`, `docker run`, ruch HTTP do JEDNEJ
+aplikacji Nuxt (apps/shop, skladajacej modules/home, modules/product,
+modules/cart - patrz ARCHITECTURE.md#10), wspoldzielony stan koszyka miedzy
 nimi, oraz `docker stop` (graceful shutdown, ~160ms).
 
 ```sh
@@ -19,7 +20,7 @@ docker build -f deploy/docker/Dockerfile -t nuxt-cordis-shop:latest .
 docker run -d -p 8080:8080 --name shop nuxt-cordis-shop:latest
 
 curl http://localhost:8080/
-curl http://localhost:8080/product/api/catalog
+curl http://localhost:8080/api/catalog
 
 docker stop shop   # SIGTERM -> ctx.fiber.dispose() -> LIFO cleanup
 ```
@@ -56,7 +57,7 @@ bez zadnego reconcilera zdalnej konfiguracji.
 
 | Komponent | Co robi |
 |---|---|
-| `deploy/docker/Dockerfile` | buduje CALY system (home + product + cart + orchestrator) w jeden obraz |
+| `deploy/docker/Dockerfile` | buduje CALY system (apps/shop, skladajaca modules/*, + orchestrator + uslugi) w jeden obraz |
 | `deploy/workflows/build-and-push.yml` | CI: `docker build` + `docker push` do GHCR (tag = git sha, niezmienny), opcjonalnie `kubectl apply -k` |
 | `deploy/k8s/` | manifesty: `namespace.yaml`, `deployment.yaml` (RollingUpdate, `maxUnavailable: 0`, readiness/liveness probe na `/`, non-root, `readOnlyRootFilesystem`), `service.yaml`, `kustomization.yaml` |
 
@@ -151,15 +152,17 @@ ale zweryfikuj przed uzyciem produkcyjnym. Patrz `../README.md#status-weryfikacj
 
 ## Dodanie nowego (czwartego+) modulu
 
-Zero zmian w `@shop/nuxt-wrapper`/`@shop/broker`/serwisach - dowolna nowa
-aplikacja Nuxt zbudowana Nitro-presetem `node-listener` dziala od razu.
-Kroki:
+Od wersji z JEDNA appka Nuxt (`apps/shop`, patrz ARCHITECTURE.md#10) dodanie
+modulu NIE dotyka `cordis.yml` ani `deploy/docker/Dockerfile` w ogole - to
+zmiana WYLACZNIE wewnatrz builda `apps/shop`. Kroki:
 
-1. Napisz aplikacje w `apps/<id>` (kopiujac strukture `apps/cart`).
-2. Dopisz wpis w `cordis.yml` (patrz `deploy/checkout-module-plan.md` po
-   gotowy, w pelni rozpisany przyklad - modul `checkout`, celowo jeszcze nie
-   zaimplementowany).
-3. Dopisz `COPY --from=build /app/apps/<id>/.output ...` w
-   `deploy/docker/Dockerfile` (i odpowiedni wpis w `deploy/workflows/build-and-push.yml`,
-   jesli chcesz osobny filtr `paths`).
-4. Normalny `git push` -> CI buduje nowy obraz -> rolling update.
+1. Napisz `modules/<id>` (kopiujac strukture `modules/cart` - `src/module.ts`
+   + `src/runtime/pages`/`src/runtime/server`).
+2. Dopisz `'@shop/module-<id>'` do listy `modules` w `apps/shop/nuxt.config.ts`
+   oraz `"@shop/module-<id>": "workspace:*"` do `apps/shop/package.json`.
+3. Normalny `git push` -> CI buduje nowy obraz (JEDEN build `apps/shop`,
+   zawierajacy juz nowy modul) -> rolling update.
+4. Modul moze zostac wgrany, ale WYLACZONY (patrz
+   `deploy/checkout-module-plan.md` po pelny, rozpisany przyklad - modul
+   `checkout`, celowo jeszcze nie zaimplementowany) - `services/feature-registry-service`
+   pozwala pozniej wlaczyc go bez kolejnego rebuildu/deploymentu.

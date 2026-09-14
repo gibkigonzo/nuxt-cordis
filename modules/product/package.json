@@ -1,0 +1,14 @@
+{
+  "name": "@shop/module-product",
+  "version": "0.1.0",
+  "description": "Nuxt Module: katalog produktow. Rejestruje strone '/product' i server routes (katalog, dodanie do koszyka) w hostujacej appce apps/shop - wstrzykuje koefekty cart+product.",
+  "type": "module",
+  "main": "./src/module.ts",
+  "dependencies": {
+    "@nuxt/kit": "^4.5.2",
+    "@shop/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "cordis": "^4.0.0-rc.8"
+  }
+}

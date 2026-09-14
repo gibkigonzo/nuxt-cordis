@@ -1,34 +1,48 @@
 # nuxt-cordis-shop
 
-Sklep zbudowany jako **modularny monolit runtime**: trzy (docelowo wiecej)
-niezalezne aplikacje Nuxt, kazda budowana i wersjonowana osobno, dzialaja jako
-**fibery jednego procesu Node** orkiestrowanego przez [Cordis](https://github.com/cordiverse/cordis)
-— meta-framework spatiotemporal composability (rewersyjne efekty + reaktywne
-koefekty). Zero kontenerow-na-uslugę, zero sieci miedzy modulami dzielacymi
-stan, pelna izolacja bledow i hot-reload pojedynczej aplikacji bez przerywania
-pozostalych.
+Sklep zbudowany jako **modularny monolit runtime**: JEDNA aplikacja Nuxt
+(`apps/shop`), skladajaca strony/route'y z niezaleznych **Nuxt Modules**
+(`modules/home`, `modules/product`, `modules/cart` - build-time, patrz
+[`ARCHITECTURE.md#10`](./ARCHITECTURE.md)), dziala jako fiber JEDNEGO procesu
+Node orkiestrowanego przez [Cordis](https://github.com/cordiverse/cordis) —
+meta-framework spatiotemporal composability (rewersyjne efekty + reaktywne
+koefekty). Uslugi backendowe (koszyk, katalog, rejestr feature'ow) sa
+niezaleznymi koefektami Cordis wspoldzielonymi w pamieci procesu — zero
+kontenerow-na-usluge, zero sieci miedzy komponentami dzielacymi stan, pelna
+izolacja bledow i hot-reload calej appki bez restartu uslug backendowych.
 
-Zbudowane w oparciu o [`docs/PlAn.md`](./docs/PlAn.md) (architektura). Wczesniejszy
-plan deploymentu z [`docs/deploy.md`](./docs/deploy.md) (dynamiczne pobieranie
-kodu modulow przez siec w dzialajacym procesie) zostal **swiadomie porzucony
-ze wzgledow bezpieczenstwa** - patrz [`ARCHITECTURE.md#8`](./ARCHITECTURE.md)
-po uzasadnienie. Zobacz [`ARCHITECTURE.md`](./ARCHITECTURE.md) po pelny opis
-decyzji projektowych i [`deploy/README.md`](./deploy/README.md) po przewodnik
-wdrozenia (Docker do testow lokalnych, Kubernetes jako sciezka produkcyjna).
+**Ta wersja architektury jest wynikiem drugiej iteracji.** Pierwsza wersja
+skladala sklep z TRZECH osobnych aplikacji Nuxt (kazda: wlasny port, wlasny
+proces HTTP, wlasny build) spinanych brokerem HTTP. Zewnetrzna analiza
+(zewnetrzne AI, wrzesien 2026 — patrz [`ARCHITECTURE.md#10`](./ARCHITECTURE.md))
+wykazala, ze to nie jest wlasciwa warstwa dla granic modulow w Nuxcie: Nuxt
+sam ma juz mechanizm build-time do skladania niezaleznie autorstwa czesci w
+JEDNA appke (**Nuxt Modules**), a broker + osobne porty tylko duplikowaly to,
+co router Nuxta juz robi. Broker (`@shop/broker`) i reaktywna tabela tras
+(`@shop/router-service`) zostaly **usuniete** — patrz `git log` po historie
+tej decyzji. Wczesniejszy plan deploymentu z [`docs/deploy.md`](./docs/deploy.md)
+(dynamiczne pobieranie kodu modulow przez siec w dzialajacym procesie) rowniez
+zostal **swiadomie porzucony ze wzgledow bezpieczenstwa** - patrz
+[`ARCHITECTURE.md#8`](./ARCHITECTURE.md) po uzasadnienie. Zobacz
+[`ARCHITECTURE.md`](./ARCHITECTURE.md) po pelny opis decyzji projektowych i
+[`deploy/README.md`](./deploy/README.md) po przewodnik wdrozenia (Docker do
+testow lokalnych, Kubernetes jako sciezka produkcyjna).
 
 ## Struktura
 
 ```text
-apps/home            Nuxt - strona glowna           (port 3000, /)
-apps/product          Nuxt - katalog produktow        (port 3001, /product)
-apps/cart              Nuxt - koszyk                    (port 3002, /cart)
+apps/shop                  jedyna aplikacja Nuxt (port 8080) - skromny host,
+                            zero wlasnych stron: kazda strona pochodzi z modulu
 
-services/cart-service   koefekt 'cart'    - stan koszyka w pamieci procesu
-services/product-service koefekt 'product' - katalog produktow
-services/router-service koefekt 'router'  - reaktywna tabela tras dla brokera
+modules/home                Nuxt Module - strona glowna (trasa: /)
+modules/product              Nuxt Module - katalog produktow (trasa: /product)
+modules/cart                   Nuxt Module - koszyk (trasa: /cart)
+
+services/cart-service         koefekt 'cart'    - stan koszyka w pamieci procesu
+services/product-service       koefekt 'product' - katalog produktow
+services/feature-registry-service koefekt 'features' - ktore moduly sa aktualnie wlaczone
 
 packages/nuxt-wrapper   Cordis-owy wrapper: start/stop zbudowanej apki Nuxt
-packages/broker         Service Broker (brama HTTP, jeden publiczny port)
 packages/shared         wspoldzielone typy + "bridge" (patrz ARCHITECTURE.md)
 
 orchestrator            bootstrapuje Context + Loader; caly skladu opisuje cordis.yml
@@ -38,12 +52,13 @@ deploy/                  Docker, manifesty Kubernetes, pipeline CI (GitHub Actio
 
 Rozroznienie `packages/` vs `services/` jest mechaniczne, nie "biznes vs infra":
 `services/*` to komponenty Cordisa, ktore `provide`-uja koefekt WSTRZYKIWANY
-przez cos innego (`cart-service`/`product-service`/`router-service` - wszystkie
-trzy sa `inject`-owane gdzie indziej, mimo ze `router-service` jest infrastruktura
-routingu, nie logika domenowa). `packages/*` to reszta: albo zwykle biblioteki
-bez cyklu zycia Cordisa (`shared`), albo komponenty Cordisa, ktore SAME
-konsumuja koefekty, ale niczego nie dostarczaja innym (`broker`, `nuxt-wrapper` -
-nic ich nie `inject`-uje).
+przez cos innego (`cart-service`/`product-service`/`feature-registry-service` -
+wszystkie trzy sa `inject`-owane w `apps/shop`). `packages/*` to reszta:
+albo zwykle biblioteki bez cyklu zycia Cordisa (`shared`), albo komponenty
+Cordisa, ktore SAME konsumuja koefekty, ale niczego nie dostarczaja innym
+(`nuxt-wrapper` - nic go nie `inject`-uje). `modules/*` to osobna kategoria:
+**Nuxt Modules** (`@nuxt/kit`), dzialajace WYLACZNIE podczas builda `apps/shop`
+- nie sa komponentami Cordis w ogole, patrz `ARCHITECTURE.md#10`.
 
 ## Wymagania
 
@@ -58,8 +73,8 @@ nic ich nie `inject`-uje).
 ```sh
 pnpm install
 
-# zbuduj wszystkie trzy aplikacje Nuxt (Nitro preset "node-listener")
-pnpm --filter home --filter product --filter cart run build
+# zbuduj JEDNA aplikacje Nuxt (Nitro preset "node-listener")
+pnpm --filter shop run build
 
 # uruchom caly system (jeden proces, jeden port publiczny: 8080)
 pnpm run start
@@ -69,41 +84,66 @@ Nastepnie:
 
 - <http://localhost:8080/> - strona glowna
 - <http://localhost:8080/product> - katalog, "Dodaj do koszyka"
-- <http://localhost:8080/cart> - koszyk (ten sam stan, inna aplikacja/build)
+- <http://localhost:8080/cart> - koszyk (ten sam stan, inny modul Nuxta)
 
 Zatrzymanie: `Ctrl+C` (SIGINT) lub `kill <pid>` (SIGTERM) - orchestrator
 kaskadowo zamyka wszystkie fibery (LIFO) przed wyjsciem.
 
-### Tryb deweloperski z hot-reloadem pojedynczej aplikacji
+### Tryb deweloperski z hot-reloadem
 
 ```sh
 CORDIS_CONFIG=./cordis.dev.yml pnpm run start
 ```
 
-W tym trybie kazda instancja Nuxt ma wlasny watcher (`config.watch: true` w
-`cordis.dev.yml`) obserwujacy katalog aplikacji. W drugim terminalu:
+W tym trybie `apps/shop` ma wlasny watcher (`config.watch: true` w
+`cordis.dev.yml`) obserwujacy caly katalog appki (w tym `modules/*`, bo
+Rollup/Nitro bundluje ich kod bezposrednio w wynikowy plik). W drugim
+terminalu:
 
 ```sh
-pnpm --filter product run build   # zmien kod, przebuduj
+pnpm --filter shop run build   # zmien kod (w apps/shop LUB w dowolnym modules/*), przebuduj
 ```
 
-Podmiana jest "make-before-break" (Section 6.2 papieru Cordis: Service
-Broker), NIE dispose-then-create: `@shop/nuxt-wrapper` uruchamia nowa
-instancje na porcie efemerycznym OBOK jeszcze dzialajacej starej, przelacza
-`RouterService` na nia dopiero gdy nowa faktycznie nasluchuje, i DOPIERO
-POTEM zamyka stara (`server.close()` odsacza polaczenia w locie, nie zrywa
-ich) - `product` sam siebie wymienia bez wlasnego przestoju, nie tylko bez
-wplywu na `home`/`cart`. Zweryfikowane empirycznie w tej sesji: 260 zapytan
-co 50ms do `/product` w petli obejmujacej caly rebuild - `0/260` bledow,
-`curl /cart` i `curl /` rowniez caly czas `200`. Stan `CartService` (osobny
-fiber) przetrwa w calosci niezaleznie.
+Podmiana jest zero-downtime, ale INACZEJ niz przed pivotem na jedna appke:
+`@shop/nuxt-wrapper` otwiera JEDEN, trwaly `http.Server` raz i nigdy go nie
+zamyka/otwiera ponownie - hot-reload podmienia WYLACZNIE wewnetrzna
+referencje do funkcji obslugujacej request (atomowa podmiana zmiennej w
+jednowatkowym JS). Zweryfikowane empirycznie w tej sesji: 200 requestow co
+50ms obejmujacych caly cykl rebuildu - `0/200` bledow, caly czas dokladnie
+jeden proces nasluchujacy na tym samym porcie (patrz ARCHITECTURE.md#5 po
+uzasadnienie, dlaczego wczesniejszy model "nowy serwer na porcie
+efemerycznym" - poprawny WYLACZNIE gdy broker przekierowywal ruch - po
+usunieciu brokera psul caly system po pierwszym reloadzie). Stan uslug
+backendowych (`CartService`, `ProductService`, `FeatureRegistryService` -
+osobne fibery) przetrwa w calosci niezaleznie od podmiany appki.
+
+## Skladanie/wylaczanie funkcjonalnosci bez rebuildu
+
+Poza build-time (Nuxt Modules, wyzej), istnieje DRUGI, celowo odrebny
+mechanizm: `services/feature-registry-service` (koefekt `features`) pamieta,
+ktore z juz-zbudowanych modulow sa aktualnie wlaczone. To pozwala wgrac nowy
+modul jako WYLACZONY (bezpieczny, zrewiewowany build), a potem wlaczyc go bez
+rebuildu i bez restartu - `ctx.get('features').enable('checkout')` z
+dowolnego miejsca majacego dostep do `ctx`. Kazdy modul deklaruje w
+manifescie strone ORAZ kazdy wlasny server route - `disable(id)` gatuje
+WSZYSTKIE z nich, nie tylko strone. Zweryfikowane empirycznie w tej sesji:
+`disable('cart')` -> `GET /cart`, `GET /api/cart`, `POST /api/cart/remove`,
+`POST /api/cart/clear` wszystkie natychmiast `404`, `GET /product`,
+`POST /api/cart/add` i `GET /` nadal `200`, zero rebuildu, zero restartu
+procesu. Pelny przyklad:
+[`deploy/checkout-module-plan.md`](./deploy/checkout-module-plan.md).
+
+**To NIE jest to samo, co usuniety `@shop/remote-sync`** (patrz
+`ARCHITECTURE.md#8`): przelaczany jest WYLACZNIE kod, ktory juz przeszedl
+build+review+CI i jest czescia tego samego, jednego `.output` — nigdy nowy,
+niezweryfikowany kod pobierany z sieci.
 
 ## Deployment
 
 Jedna sciezka: **buduj jeden niezmienny obraz Docker w CI, wdrazaj rolling
 update'em w Kubernetesie.** Cordis pozostaje WYLACZNIE orchestratorem kodu
-juz zapieczonego w obrazie - `cordis.yml` jest czytany raz przy starcie,
-zero pobierania kodu przez siec w dzialajacym procesie.
+juz zapieczonego w obrazie - `cordis.yml` jest czytany raz przy starcie, zero
+pobierania kodu przez siec w dzialajacym procesie.
 
 1. **Docker** (`deploy/docker/`) - build calego systemu w jeden obraz, jeden
    proces, jeden port. Zweryfikowane `docker build` + `docker run` +
@@ -123,14 +163,24 @@ zero pobierania kodu przez siec w dzialajacym procesie.
 Wszystko ponizej zostalo faktycznie uruchomione i sprawdzone w tym repo (nie
 tylko zaprojektowane na papierze):
 
-- [x] build + start 3 aplikacji, routing przez brokera, wspoldzielony stan koszyka
-- [x] hot-reload pojedynczej aplikacji "make-before-break", bez przestoju SAMEJ
-      SIEBIE ani pozostalych (0/260 bledow w teście obejmujacym caly rebuild,
-      dev-only mechanizm - `cordis.dev.yml`, patrz sekcja wyzej - nie myl z usunietym
-      mechanizmem dystrybucji kodu przez siec opisanym w `ARCHITECTURE.md#8`)
+- [x] build + start JEDNEJ appki Nuxt (`apps/shop`), skladajacej strony z
+      trzech Nuxt Modules, wspoldzielony stan koszyka miedzy nimi
+- [x] koefekt `features` (rejestr modulow): `disable('cart')` -> strona
+      ORAZ wszystkie jej server routes natychmiast `404` (inne moduly nadal
+      `200`), bez rebuildu i bez restartu procesu; `register()` rzuca przy
+      probie zarejestrowania przez dwa rozne moduly tej samej sciezki -
+      zweryfikowane przez sygnal procesu w sesji deweloperskiej (nie czesc
+      commitowanego kodu, patrz `deploy/checkout-module-plan.md#7`)
+- [x] hot-reload calej appki bez przestoju: 200 requestow co 50ms
+      obejmujacych caly cykl rebuildu, `0/200` bledow, caly czas jeden
+      proces na tym samym porcie (dev-only mechanizm - `cordis.dev.yml`,
+      patrz sekcja wyzej i ARCHITECTURE.md#5)
 - [x] graceful shutdown (SIGTERM) - kaskadowe zamkniecie w kolejnosci LIFO
-- [x] izolacja bledow: awaria jednej instancji nie wplywa na pozostale
 - [x] `docker build` + `docker run` + `docker stop` calego systemu
+- [x] `host: 0.0.0.0` w `cordis.yml` - proces nasluchuje na wszystkich
+      interfejsach (`*:8080`, zweryfikowane przez `lsof`), nie tylko na
+      loopback (patrz ARCHITECTURE.md#pivot-fixes - wczesniej brakujace,
+      lamalo kazdy deployment Docker/Kubernetes)
 - [ ] `deploy/k8s/` + `deploy/workflows/build-and-push.yml` - manifesty i pipeline
       napisane wedlug udokumentowanego, poprawnego API (`kubectl`/`kustomize`/GHCR),
       ale NIE uruchomione end-to-end na prawdziwym klastrze/rejestrze w tej sesji
@@ -143,5 +193,11 @@ rozpakowywal archiwa `.tar.gz` z kodem modulow w dzialajacym procesie, bez
 weryfikacji integralnosci, sandboxa czy autoryzacji poza dostepem do `main`.
 Uzasadnienie i pelny opis ryzyka: [`ARCHITECTURE.md#8`](./ARCHITECTURE.md).
 
-Czwarty modul (`apps/checkout`) jest celowo tylko zaplanowany, nie zbudowany -
+Usunieto rowniez (przy przejsciu na jedna appke Nuxt, patrz
+[`ARCHITECTURE.md#10`](./ARCHITECTURE.md)): `@shop/broker` (Service Broker -
+HTTP reverse proxy po prefiksie sciezki) i `@shop/router-service` (reaktywna
+tabela tras miedzy instancjami) - Nuxt sam routuje wewnatrz jednej appki, wiec
+nie ma juz czego proxowac.
+
+Czwarty modul (`modules/checkout`) jest celowo tylko zaplanowany, nie zbudowany -
 patrz [`deploy/checkout-module-plan.md`](./deploy/checkout-module-plan.md).

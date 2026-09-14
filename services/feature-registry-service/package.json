@@ -1,0 +1,11 @@
+{
+  "name": "@shop/feature-registry-service",
+  "version": "0.1.0",
+  "description": "Koefekt 'features': rejestr modulow zbudowanych do jednej appki (apps/shop) wraz z ich stanem wlaczenia - pozwala wlaczac/wylaczac juz-skompilowany modul bez rebuildu.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "@shop/shared": "workspace:*",
+    "cordis": "^4.0.0-rc.8"
+  }
+}

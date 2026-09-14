@@ -46,9 +46,10 @@ spec:
           env:
             - name: NODE_ENV
               value: production
-          # Brama (Service Broker) odpowiada na `/` ruchem strony glownej -
+          # apps/shop (modul home) odpowiada na `/` ruchem strony glownej -
           # ten sam endpoint uzywa juz deploy/docker/docker-compose.yml jako
-          # healthcheck.
+          # healthcheck. WYMAGA host: 0.0.0.0 w cordis.yml (patrz komentarz
+          # tam) - inaczej proces nie przyjmie polaczenia z kubelet.
           readinessProbe:
             httpGet:
               path: /

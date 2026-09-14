@@ -38,7 +38,9 @@ on:
     branches: [main]
     paths:
       - 'apps/**'
+      - 'modules/**'
       - 'packages/**'
+      - 'services/**'
       - 'orchestrator/**'
       - 'cordis.yml'
       - 'deploy/docker/**'
