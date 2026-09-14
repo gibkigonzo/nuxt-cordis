@@ -43,8 +43,11 @@ export class RouterService extends Service {
 
   /**
    * Dopasowanie po najdluzszym pasujacym prefiksie sciezki. Zwraca takze sam
-   * dopasowany prefiks, zeby wolajacy (broker) mogl go odciac przed przekazaniem
-   * requestu dalej - upstream zawsze widzi sciezke tak, jakby byl zamontowany w '/'.
+   * dopasowany prefiks (dla logow/listy tras w brokerze) - NIE do odciecia:
+   * broker przekazuje `req.path` upstreamowi BEZ ZMIAN, bo kazda instancja Nuxt
+   * zna wlasny prefiks przez `app.baseURL` i Nitro sam dopasowuje trasy wzgledem
+   * niego (odciecie tutaj powodowaloby petle przekierowan 302 - patrz
+   * ARCHITECTURE.md#4 i CLAUDE.md, gotcha 4).
    */
   resolve(pathname: string): (RouteTarget & { prefix: string }) | undefined {
     let best: RouteTarget | undefined

@@ -1,4 +1,5 @@
 import { getCordisContext } from '@shop/shared/bridge'
+import { ensureCartId } from '@shop/shared/request-scope'
 
 interface AddBody {
   productId: string

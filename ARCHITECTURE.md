@@ -285,3 +285,108 @@ w kolejnosci LIFO (Theorem 16/66 papieru: recovery exactness + gwarantowane
 osiagniecie stanu spoczynkowego). Zweryfikowane: `docker stop` zamyka caly
 system (3 serwery HTTP + wyrejestrowanie tras) w ~160ms, bez wymuszonego
 `SIGKILL`.
+
+## 10. Warstwy: gdzie w tym repo faktycznie zyje Cordis {#layers}
+
+Ten dokument reaguje na zewnetrzna analize (rozmowa z AI, przygotowana przez
+uzytkownika, wrzesien 2026) na pytanie "na jakich warstwach dalo by sie
+zaimplementowac Cordis w Nuxcie, zeby nie bylo to zrobione naiwnie". Kluczowy
+wniosek tamtej analizy: NIE budowac jednego globalnego kontenera Cordis
+importowanego jednoczesnie przez build, Nitro, SSR i klienta, tylko rozdzielic
+system na osobne warstwy o roznym czasie zycia:
+
+```text
+Nuxt module - build time              -> generuje statyczne manifesty
+Nitro root context - lifetime procesu -> tworzy child scope
+Request/SSR context - lifetime requestu -> serializuje tylko dane
+Client context - lifetime aplikacji/feature -> UI slots / lazy islands
+```
+
+Uwaga terminologiczna: `cordis` uzywany w tym repo to pakiet
+[`cordiverse/cordis`](https://github.com/cordiverse/cordis) (ten sam, ktory
+opisuje `docs/paper.md`). Zewnetrzne analizy tego typu czasem mieszaja w
+cytowaniach niepowiazane projekty o podobnie brzmiacych nazwach - warstwy
+ponizej sa zweryfikowane wzgledem FAKTYCZNEGO kodu tego repo, nie
+bezkrytycznie przepisane z zewnetrznego zrodla.
+
+Ten repo NIE jest "jedna aplikacja Nuxt z wtyczalnymi feature'ami" (scenariusz,
+jaki analiza opisuje wprost - manifest featureʼa, `ctx.slots.register(...)`,
+client-side loader per-feature) - jest modularnym monolitem WIELU calych
+aplikacji Nuxt skladanych na poziomie procesu. Dlatego czesc warstw z analizy
+ma tu bezposredni odpowiednik, a czesc SWIADOMIE nie ma zadnego - i to jest
+wazne rozroznienie, nie przeoczenie:
+
+1. **Build-time (manifest)** -> `cordis.yml` + `nuxi build` kazdej apki
+   (Sekcja 1). `Loader`/`@cordisjs/plugin-include` czyta `cordis.yml`
+   JEDNORAZOWO przy starcie procesu, z pliku juz zapieczonego w obrazie
+   (Sekcja 8) - zero rozwiazywania zaleznosci czy pobierania czegokolwiek w
+   trakcie requestu. Odpowiada "katalogowi pluginow" z analizy (walidacja
+   configu, `inject` jako rozwiazanie grafu zaleznosci, `route` jako mapa
+   trasa -> modul), z ta roznica, ze "pluginem" jest tu cala aplikacja Nuxt,
+   nie fragment UI wewnatrz jednej aplikacji.
+2. **Nitro root / uslugi o czasie zycia procesu** -> `orchestrator/src/index.ts`
+   (korzenny `ctx`) + `services/cart-service`, `services/product-service`,
+   `services/router-service`. Tworzone raz, zyja przez caly proces, sa
+   JEDYNA rzecza wstrzykiwana do aplikacji (`config.inject` w `cordis.yml`).
+   Zaden graf pluginow nie jest montowany od nowa przy kazdym requescie -
+   dokladnie to, przed czym ostrzega analiza.
+3. **Request scope** -> wczesniej nieformalny (identyczna funkcja
+   `ensureCartId` byla zduplikowana w `apps/cart/server/utils/cart-id.ts` I
+   `apps/product/server/utils/cart-id.ts`), teraz jawna, minimalna warstwa:
+   [`packages/shared/src/request-scope.ts`](./packages/shared/src/request-scope.ts).
+   Celowo waska (jeden identyfikator koszyka z cookie) - ten demo-sklep nie ma
+   autoryzacji/tenantow/tracingu, wiec dodawanie ich "na zapas" byloby
+   dokladnie tym, czego zabrania CLAUDE.md ("nie projektuj pod hipotetyczne
+   przyszle wymagania"). Gdyby sie pojawily, to jest miejsce, gdzie naturalnie
+   rosna - obok, nie zamiast, tego co juz tu jest.
+4. **SSR nuxtApp adapter / client kernel / UI slots / profile hydratacji** ->
+   SWIADOMY BRAK. Te warstwy w analizie rozwiazuja problem "jak przegladarka
+   laduje plugin runtime zarejestrowany w manifescie budowanym dla JEDNEJ
+   aplikacji Nuxt". Ten repo nie ma tego problemu: kazdy "feature" TO cala,
+   osobna aplikacja Nuxt (`apps/home`, `apps/product`, `apps/cart`) z
+   normalnym Nuxt SSR i normalnymi komponentami `.vue` - zaden kod Cordis nie
+   trafia do przegladarki. Zweryfikowane w tym kodzie: `bridge.ts` jest
+   importowany WYLACZNIE z `server/api/*.ts` przez jawna podsciezke
+   `@shop/shared/bridge`, nigdy z pliku `.vue`; komponenty `.vue` importuja z
+   `@shop/shared` wylacznie przez `import type` (Product/CartSnapshot),
+   ktore TypeScript/Vite usuwaja calkowicie przed bundlowaniem. Budowanie
+   wlasnego client-side kernela/registry slotow byloby tu dokladnie
+   antywzorcem z listy analizy ("jeden uniwersalny kontener importowany
+   jednoczesnie przez Nitro, SSR i klienta") - celowo pominiete, nie
+   zapomniane.
+5. **Granice paczki** (p. "wazny podzial paczki" w analizie) -> entrypoint
+   `"."` pakietu `@shop/shared` JUZ NIE re-eksportuje `bridge.ts` (wczesniej
+   robil to przez `export * from './bridge.ts'` w `index.ts`). Kod
+   server-only jest osiagalny WYLACZNIE przez jawne podsciezki
+   (`@shop/shared/bridge`, `@shop/shared/request-scope`) - dokladnie
+   mechanizm `exports` z analizy, majacy uniemozliwic przypadkowe wciagniecie
+   kodu serwerowego do bundla przegladarki. Zaden dzisiejszy call-site sie nie
+   zmienil (wszystkie juz uzywaly podsciezek), ale barrel byl "zywa
+   pulapka" dla kolejnego kontrybutora.
+
+**Lista antywzorcow z analizy, zweryfikowana wzgledem tego repo:**
+
+- [x] brak "eager" barrela importujacego wszystkie moduly na raz - kazda apka
+  Nuxt jest importowana leniwie przez `@shop/nuxt-wrapper`, dopiero gdy jej
+  `inject` jest spelnione.
+- [x] brak montowania calego grafu pluginow przy kazdym requescie - uslugi sa
+  singletonami o czasie zycia procesu (punkt 2 wyzej).
+- [x] brak instancji `Context`/serwisu w payloadzie SSR - `server/api/*.ts`
+  zwraca wylacznie proste obiekty danych (`CartSnapshot`, `Product[]`), nigdy
+  `ctx` ani klase serwisu.
+- [x] brak jednego barrela eksportujacego kod server+client - patrz punkt 5.
+- [x] brak wlasnego client runtime/registry slotow - patrz punkt 4.
+- [x] brak dynamicznego pobierania zdalnego kodu do dzialajacego procesu -
+  to byl JEDYNY prawdziwy naiwny blad w historii tego repo (`@shop/remote-sync`
+  + R2/KV), juz usuniety i uzasadniony w Sekcji 8. Ta sama konkluzja z innej
+  strony: "Ladowanie dowolnego zdalnego JavaScriptu jako czesc publicznej
+  strony" i "wlasna implementacja lazy loadingu zamiast dynamicznych importow"
+  sa wprost na liscie antywzorcow zrodlowej analizy.
+
+Podsumowanie pokrywa sie z konkluzja zrodlowej analizy ("Cordis zarzadza
+mozliwosciami produktu i zasobami, Nuxt zarzadza renderowaniem, routingiem,
+chunkami oraz hydratacja"), przelozona na ksztalt tego repo: Cordis odpowiada
+za kompozycje procesu (ktore aplikacje dzialaja, do jakich uslug maja dostep,
+hot-swap bez przestoju), Nuxt odpowiada za wszystko WEWNATRZ kazdej aplikacji
+(SSR, routing, hydratacja) - i miedzy nimi nie powstal trzeci, nakladajacy sie
+runtime.

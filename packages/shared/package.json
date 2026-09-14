@@ -6,7 +6,11 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./bridge": "./src/bridge.ts"
+    "./bridge": "./src/bridge.ts",
+    "./request-scope": "./src/request-scope.ts"
+  },
+  "dependencies": {
+    "h3": "^1.15.11"
   },
   "devDependencies": {
     "cordis": "^4.0.0-rc.8"
