@@ -50,10 +50,17 @@ spec:
               value: production
             - name: REDIS_URL
               value: redis://redis:6379
-          # apps/shop (modul home) odpowiada na `/` ruchem strony glownej -
-          # ten sam endpoint uzywa juz deploy/docker/docker-compose.yml jako
-          # healthcheck. WYMAGA host: 0.0.0.0 w cordis.yml (patrz komentarz
-          # tam) - inaczej proces nie przyjmie polaczenia z kubelet.
+          # readinessProbe na `/` (modul home) CELOWO odzwierciedla cala
+          # zaleznosc, wlacznie z Redis (feature-gate.ts odpytuje koefekt
+          # 'features', ktory wymaga 'redis') - pod NIE powinien dostawac
+          # ruchu, dopoki caly stack faktycznie dziala. livenessProbe uzywa
+          # NATOMIAST `/healthz` (server/api/healthz.get.ts, zero zaleznosci
+          # od Cordis/Redis) - gdyby liveness tez bil w `/`, przejsciowa
+          # awaria/wolny start Redisa restartowalby caly kontener w kolko
+          # (zdrowy proces Node zabijany za cudzy, downstream problem), zamiast
+          # po prostu zostac NotReady az Redis wroci - patrz ARCHITECTURE.md#shared-state.
+          # WYMAGA host: 0.0.0.0 w cordis.yml (patrz komentarz tam) - inaczej
+          # proces nie przyjmie polaczenia z kubelet.
           readinessProbe:
             httpGet:
               path: /
@@ -63,7 +70,7 @@ spec:
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /
+              path: /healthz
               port: http
             initialDelaySeconds: 15
             periodSeconds: 10

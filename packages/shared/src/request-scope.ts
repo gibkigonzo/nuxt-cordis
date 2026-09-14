@@ -7,10 +7,12 @@ const COOKIE_NAME = 'cart_id'
 /**
  * Warstwa "request scope" (patrz ARCHITECTURE.md#10): dane wyliczane PER REQUEST,
  * nie trzymane w koefekcie ani w globalnym stanie. Jeden wspoldzielony identyfikator
- * koszyka na przegladarke, widoczny we wszystkich aplikacjach (cookie z path='/',
- * wiec dziala niezaleznie od tego, pod jakim prefiksem broker wystawia dana
- * instancje). Zyje w `packages/shared`, nie w `server/utils/*` pojedynczej apki,
- * zeby `apps/product` i `apps/cart` nie utrzymywaly dwoch kopii tej samej logiki.
+ * koszyka na przegladarke (cookie z path='/', widoczny na kazdej stronie tej
+ * samej, jednej appki `apps/shop`). Zyje w `packages/shared`, nie w
+ * `server/utils/*` `apps/shop`, zeby `modules/product` i `modules/cart` (dwa
+ * niezalezne Nuxt Modules skladane w te sama appke, kazdy z wlasnymi server
+ * routes odczytujacymi/mutujacymi koszyk) nie utrzymywaly dwoch kopii tej
+ * samej logiki.
  */
 export function ensureCartId(event: H3Event): string {
   let id = getCookie(event, COOKIE_NAME)

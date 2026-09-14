@@ -43,20 +43,32 @@ export class CartService extends Service {
 
   async add(cartId: string, productId: string, quantity = 1): Promise<CartSnapshot> {
     const key = this.key(cartId)
-    const next = await this.ctx.redis.client.hincrby(key, productId, quantity)
+    // hincrby+expire w jednym pipeline (1 round trip zamiast 2) - `expire` nie
+    // zalezy od wyniku `hincrby`, wiec moga jechac razem; `hdel` zostaje
+    // osobnym wywolaniem, bo zalezy od wyniku `hincrby` (warunkowe).
+    const [[, next]] = (await this.ctx.redis.client
+      .pipeline()
+      .hincrby(key, productId, quantity)
+      .expire(key, CART_TTL_SECONDS)
+      .exec()) as [[Error | null, number], [Error | null, number]]
     if (next <= 0) await this.ctx.redis.client.hdel(key, productId)
-    await this.ctx.redis.client.expire(key, CART_TTL_SECONDS)
     return this.snapshot(cartId)
   }
 
   async removeItem(cartId: string, productId: string): Promise<CartSnapshot> {
-    await this.ctx.redis.client.hdel(this.key(cartId), productId)
+    const key = this.key(cartId)
+    // `expire` tutaj rowniez odswieza TTL (patrz docstring klasy - kazdy
+    // zapis, nie tylko `add()`, odswieza 7-dniowe okno od ostatniej aktywnosci).
+    await this.ctx.redis.client.pipeline().hdel(key, productId).expire(key, CART_TTL_SECONDS).exec()
     return this.snapshot(cartId)
   }
 
   async clear(cartId: string): Promise<CartSnapshot> {
     await this.ctx.redis.client.del(this.key(cartId))
-    return this.snapshot(cartId)
+    // Bez snapshot(cartId) tutaj - wynik jest deterministycznie pusty (klucz
+    // wlasnie usuniety), wiec kolejny HGETALL bylby czystym, zmarnowanym
+    // round tripem do Redis.
+    return { cartId, items: [], total: 0, itemCount: 0 }
   }
 
   /**
@@ -68,14 +80,16 @@ export class CartService extends Service {
     const raw = await this.ctx.redis.client.hgetall(this.key(cartId))
     const productService = this.ctx.get('product')
     let total = 0
+    let itemCount = 0
     const items = Object.entries(raw).map(([productId, quantityRaw]) => {
       const quantity = Number(quantityRaw)
       const product = productService?.find(productId)
       const lineTotal = (product?.price ?? 0) * quantity
       total += lineTotal
+      itemCount += quantity
       return { productId, quantity, name: product?.name, price: product?.price, lineTotal }
     })
-    return { cartId, items, total, itemCount: items.reduce((n, i) => n + i.quantity, 0) }
+    return { cartId, items, total, itemCount }
   }
 }
 

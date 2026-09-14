@@ -34,8 +34,12 @@
 # --- Redis: jedyny stan, ktory MUSI byc spojny miedzy wieloma podami tego
 # samego obrazu (koszyk, wlaczone/wylaczone moduly) - patrz uzasadnienie w
 # services/redis-service. `cart-service`/`feature-registry-service` deklaruja
-# `static inject = ['redis']`, wiec aktywuja sie dopiero gdy ten fiber jest
-# gotowy (Theorem 63) - kolejnosc ponizej jest czysto kosmetyczna.
+# `static inject = ['redis']`, wiec KONSTRUUJA sie dopiero gdy koefekt
+# 'redis' istnieje - ale to istnieje NATYCHMIAST po skonstruowaniu
+# RedisService, NIE dopiero po udanym polaczeniu (`ctx.effect()` w jej
+# konstruktorze jest asynchroniczny i nie blokuje dostarczenia koefektu) -
+# zweryfikowane empirycznie, patrz docstring RedisService i
+# ARCHITECTURE.md#shared-state. Kolejnosc ponizej jest czysto kosmetyczna.
 #
 # UWAGA: celowo BEZ `config.url` tutaj - `cordis.yml` jest zapieczone w obrazie
 # (ARCHITECTURE.md#8), wiec adres Redisa NIE moze byc w nim zahardkodowany

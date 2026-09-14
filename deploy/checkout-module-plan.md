@@ -101,8 +101,10 @@ I `"@shop/module-checkout": "workspace:*"` w `apps/shop/package.json`.
    nie dodawac publicznego, niezabezpieczonego API do wlaczania funkcji -
    patrz "Czego to demo NIE dodaje" nizej).
 5. Kolejny request do `/checkout` trafia juz do dzialajacego, zbudowanego
-   kodu - `services/feature-registry-service` to zwykly, reaktywny stan w
-   pamieci procesu (Map), wiec przelaczenie jest natychmiastowe.
+   kodu - `services/feature-registry-service` trzyma `enabled`/`disabled` w
+   Redis (koefekt `redis`, patrz ARCHITECTURE.md#shared-state), wiec
+   przelaczenie jest natychmiastowe I widoczne od razu na WSZYSTKICH podach
+   tego samego obrazu, nie tylko na tym, ktory obsluzyl `enable()`.
 6. Sesje uzytkownikow aktualnie przegladajacych `/product` lub `/cart` NIE sa
    w ogole przerywane - `feature-gate` middleware sprawdza WYLACZNIE prefiks
    sciezki, ktory sie zmienia (`/checkout`), zaden inny stan nie jest ruszany.
@@ -137,10 +139,10 @@ nigdy wprowadzanie nowego, niezweryfikowanego kodu do dzialajacego procesu.
   - w tej sesji zweryfikowano mechanizm przez sygnal procesu (`kill -USR2`,
     tylko do testow lokalnych, NIE czesc zadnego commitowanego kodu) - realny
     panel admina wymagalby wlasnej autoryzacji, celowo poza zakresem tego demo.
-- Trwalosci stanu `enabled`/`disabled` (restart procesu przywraca domyslny
-  stan z manifestu builda) - gdyby byla potrzebna, `FeatureRegistryService`
-  jest jedynym miejscem, gdzie trzeba by dodac odczyt/zapis do zewnetrznego
-  magazynu (identycznie jak uwaga o trwalosci w `services/cart-service`).
+- Nic dodatkowego tutaj - trwalosc stanu `enabled`/`disabled` miedzy podami
+  (i miedzy restartami) jest juz zapewniona przez Redis (patrz punkt 5 wyzej
+  i ARCHITECTURE.md#shared-state); `checkout` automatycznie dziedziczy ten
+  sam mechanizm co `home`/`product`/`cart`, zero dodatkowej pracy.
 
 ## 8. Kiedy realizowac
 

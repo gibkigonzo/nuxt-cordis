@@ -45,6 +45,13 @@ on:
       - 'cordis.yml'
       - 'deploy/docker/**'
       - 'deploy/k8s/**'
+      # Dockerfile robi `COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./`
+      # PRZED `pnpm install --frozen-lockfile` - obraz zalezy od tych 3 plikow
+      # tak samo jak od kodu, wiec musza tu byc (np. sam patch bezpieczenstwa
+      # w pnpm-lock.yaml, albo zmiana pnpm-workspace.yaml jak w tym samym diffie).
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - 'pnpm-lock.yaml'
 
 permissions:
   contents: read

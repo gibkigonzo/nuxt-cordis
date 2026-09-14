@@ -115,6 +115,14 @@ export function apply(ctx: Context, config: NuxtWrapperConfig): void {
       }
       currentListener(req as never, res as never)
     })
+    // Trwaly listener bledow - `server` zyje przez caly czas trwania fibera
+    // (patrz docstring wyzej), wiec bez tego KAZDY blad na poziomie serwera
+    // PO pierwszym udanym listen() (np. EMFILE z wyczerpania deskryptorow
+    // plikow) trafialby jako nieobslugiwany event 'error' i ubijal caly
+    // proces Node (wraz ze wszystkimi innymi fiberami: cart/product/redis-service).
+    server.on('error', (error) => {
+      ctx2.logger.error(`[${config.id}] blad serwera: ${(error as Error).message}`)
+    })
 
     const doActivate = async (): Promise<void> => {
       if (disposed) return

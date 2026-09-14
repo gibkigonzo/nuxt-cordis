@@ -45,6 +45,11 @@ let registration: Promise<void> | undefined
  *    aktywne - a Redis przechowuje WYLACZNIE te decyzje ('0'/'1'), nigdy kod.
  */
 export default defineEventHandler(async (event) => {
+  // `/healthz` (patrz server/api/healthz.get.ts) musi dzialac NIEZALEZNIE od
+  // Redis/koefektow Cordis - to jedyny endpoint, ktory livenessProbe odpytuje
+  // wlasnie DLATEGO, ze `/` (readinessProbe) wymaga sprawnego Redisa nizej.
+  if (event.path.split('?')[0] === '/healthz') return
+
   const ctx = getCordisContext(import.meta.url)
   const features = ctx.get('features')
   if (!features) {

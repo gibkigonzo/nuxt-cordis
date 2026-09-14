@@ -5,6 +5,6 @@ export default defineEventHandler(async (event) => {
   const ctx = getCordisContext(import.meta.url)
   const cartId = ensureCartId(event)
   const cart = ctx.get('cart')
-  if (!cart) return { cartId, items: [], total: 0, itemCount: 0 }
+  if (!cart) throw createError({ statusCode: 503, statusMessage: 'koefekt "cart" niedostepny' })
   return await cart.snapshot(cartId)
 })

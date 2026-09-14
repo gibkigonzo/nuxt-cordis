@@ -626,15 +626,28 @@ Redis nie jest) - kolejnosc: `config.url` -> `process.env.REDIS_URL` ->
 `redis://127.0.0.1:6379` (fallback lokalny dev).
 
 `CartService` i `FeatureRegistryService` deklaruja `static inject = ['redis']`
-- Cordis gwarantuje, ze ich fiber aktywuje sie DOPIERO po udanym polaczeniu
-`RedisService` (Corollary o gated activation, patrz Sekcja 3), wiec obie
-uslugi moga zakladac dzialajace polaczenie od pierwszej metody.
+- Cordis gwarantuje WYLACZNIE, ze te dwa serwisy KONSTRUUJA sie dopiero gdy
+koefekt `redis` istnieje (Corollary o gated activation, patrz Sekcja 3), NIE
+ze `RedisService` jest juz POLACZONY w tym momencie: koefekt staje sie
+dostepny natychmiast po skonstruowaniu `RedisService`, zanim jej wewnetrzny
+`ctx.effect()` (asynchroniczne `client.connect()`) w ogole zdazy sie
+rozstrzygnac - zweryfikowane empirycznie (patrz docstring `RedisService`).
+W praktyce oznacza to, ze `shop` zaczyna nasluchiwac NAWET gdy Redis jest
+jeszcze nieosiagalny; pojedyncze wywolania `ctx.redis.client.*` czekaja
+wtedy we wbudowanej kolejce `ioredis` (`enableOfflineQueue`) do
+`maxRetriesPerRequest` prob, zanim albo sie powioda, albo zwroca czytelny
+blad requestowi, ktory je wywolal - stad rozdzielenie readiness/liveness w
+`deploy/k8s/deployment.yaml` (patrz nizej), zamiast zakladania, ze `/`
+nigdy nie odpowie przed polaczeniem Redisa.
 
 **Koszyk** (`services/cart-service`): Redis Hash `shop:cart:<cartId>`
-(pole = `productId`, wartosc = JSON `{quantity, name, price}` lub podobny
-ksztalt), TTL 7 dni odswiezany (`EXPIRE`) przy kazdym zapisie. Wszystkie
-metody sa teraz `async` (poprzednio synchroniczne operacje na `Map`) - stad
-kaskadowa zmiana na `await` w `modules/cart/src/runtime/server/api/*` i
+(pole = `productId`, wartosc = liczba - ilosc sztuk; nazwa/cena produktu
+NIE sa tu duplikowane, `snapshot()` dolacza je z koefektu `product` dopiero
+przy odczycie), TTL 7 dni odswiezany (`EXPIRE`) przy KAZDYM zapisie
+(`add()`/`removeItem()` - `clear()` usuwa caly klucz, wiec TTL przestaje
+miec znaczenie). Wszystkie metody sa teraz `async` (poprzednio synchroniczne
+operacje na `Map`) - stad kaskadowa zmiana na `await` w
+`modules/cart/src/runtime/server/api/*` i
 `modules/product/src/runtime/server/api/cart/add.post.ts`.
 
 **Feature-toggle** (`services/feature-registry-service`): stan jest CELOWO
@@ -684,6 +697,23 @@ dwa pody za jednym k8s Service.
   to, co robi `disable('cart')`) -> `GET /cart` i `GET /api/cart` natychmiast
   `404` na OBU portach jednoczesnie, bez restartu zadnego z procesow.
   Ponowny zapis `1` przywraca `200` na obu portach natychmiast.
+
+### `deploy/k8s/deployment.yaml`: readiness rozdzielone od liveness
+
+Poniewaz `shop` zaczyna nasluchiwac na `/` NIEZALEZNIE od tego, czy Redis
+jest juz polaczony (patrz wyzej), a `/` (strona `home`) przechodzi przez
+`feature-gate.ts`, ktory wymaga dzialajacego Redisa (`isEnabled()`),
+`readinessProbe` i `livenessProbe` w `deployment.yaml` CELOWO bija w rozne
+endpointy: `readinessProbe` w `/` (poprawnie - pod nie powinien dostawac
+ruchu, dopoki caly stack faktycznie dziala), `livenessProbe` w
+`apps/shop/server/routes/healthz.get.ts` (nowy plik - zero zaleznosci od
+Cordis/Redis, `feature-gate.ts` wylancza go jawnie na samym poczatku, PRZED
+jakimkolwiek dostepem do `ctx`). Gdyby liveness rowniez bilo w `/`,
+przejsciowa awaria Redisa (proces Node calkowicie zdrowy) restartowalaby
+caly kontener w kolko zamiast po prostu zostac `NotReady` - zweryfikowane
+empirycznie: `GET /healthz` przy wylaczonym Redis -> natychmiastowe `200`,
+`GET /` w tych samych warunkach -> `500` po ok. 1-3s (oczekiwanie w
+kolejce `ioredis` do wyczerpania `maxRetriesPerRequest`).
 
 ### Deployment: `deploy/k8s/redis-deployment.yaml`
 
